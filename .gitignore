@@ -1,0 +1,5 @@
+.env
+instance/
+*.pyc
+__pycache__/
+session_manager/
