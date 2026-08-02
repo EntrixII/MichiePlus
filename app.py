@@ -264,7 +264,7 @@ def merge_session_cart_to_db(user_id):
     # Clear session cart
     session.pop('cart', None)
 
-def get_db_connection(timeout=15):
+def get_db_connection(timeout=120):
     """Create a database connection with optional timeout."""
     conn = psycopg2.connect(
         DATABASE_URL,

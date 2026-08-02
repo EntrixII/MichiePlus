@@ -1,44 +1,22 @@
-import sqlite3
-import json
+import psycopg2
+import psycopg2.extras
+from psycopg2 import pool as pg_pool
+
+def get_db_connection(timeout=15):
+    """Create a database connection with optional timeout."""
+    conn = psycopg2.connect(
+        DATABASE_URL,
+        connect_timeout=timeout,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
+    return conn
 
 
-def check_database():
-    conn = sqlite3.connect('bizspark.db')
-    cursor = conn.cursor()
+conn = get_db_connection()
+cur = conn.cursor()
 
-    # List all tables
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = cursor.fetchall()
-    print("📋 Tables in database:")
-    for table in tables:
-        print(f"  - {table[0]}")
+cur.execute("SELECT version();")
+print(cur.fetchone())
 
-    print("\n" + "=" * 50)
-
-    # Check users
-    cursor.execute("SELECT id, email, full_name, user_type FROM users;")
-    users = cursor.fetchall()
-    print("\n👤 Users:")
-    for user in users:
-        print(f"  ID: {user[0]}, Email: {user[1]}, Name: {user[2]}, Type: {user[3]}")
-
-    # Check customer profiles
-    cursor.execute("SELECT user_id, username, interests, bio FROM customer_profiles;")
-    customers = cursor.fetchall()
-    print("\n🎓 Customer Profiles:")
-    for customer in customers:
-        interests = json.loads(customer[2]) if customer[2] else []
-        print(f"  User ID: {customer[0]}, Username: {customer[1]}, Interests: {interests}")
-
-    # Check vendor profiles
-    cursor.execute("SELECT user_id, business_name, business_category, is_approved FROM vendor_profiles;")
-    vendors = cursor.fetchall()
-    print("\n🏪 Vendor Profiles:")
-    for vendor in vendors:
-        print(f"  User ID: {vendor[0]}, Business: {vendor[1]}, Category: {vendor[2]}, Approved: {vendor[3]}")
-
-    conn.close()
-
-
-if __name__ == "__main__":
-    check_database()
+cur.close()
+conn.close()
