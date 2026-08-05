@@ -1,0 +1,106 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<div class="admin-header">
+    <h1>
+        <i data-lucide="book-open" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Course Detail</span>
+    </h1>
+    <a href="{{ url_for('admin_pending_courses') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Pending Courses
+    </a>
+</div>
+
+<div style="background:white;border-radius:16px;padding:32px;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,0.04);">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;">
+        <div>
+            {% if course.cover_image %}
+                <img src="{{ course.cover_image }}" alt="{{ course.title }}" style="width:100%;max-height:400px;object-fit:cover;border-radius:12px;">
+            {% else %}
+                <div style="width:100%;height:300px;background:#f3f4f6;border-radius:12px;display:flex;align-items:center;justify-content:center;">
+                    <i data-lucide="book-open" class="icon" style="width:64px;height:64px;color:#9ca3af;"></i>
+                </div>
+            {% endif %}
+        </div>
+        <div>
+            <h2 style="font-size:24px;font-weight:700;margin-bottom:4px;">{{ course.title }}</h2>
+            <p style="color:#6b7280;font-size:14px;margin-bottom:16px;">by {{ course.vendor_name }}</p>
+            <div style="font-size:28px;font-weight:700;color:#0000c1;margin-bottom:16px;">₦{{ course.price }}</div>
+            <p style="line-height:1.7;color:#4b5563;margin-bottom:24px;">{{ course.description }}</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div><strong>Category:</strong> {{ course.category }}</div>
+                <div><strong>Level:</strong> {{ course.level }}</div>
+                <div><strong>Vendor Email:</strong> {{ course.vendor_email }}</div>
+                <div><strong>Uploaded:</strong> {{ course.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                <div><strong>Status:</strong> <span class="badge bg-warning">{{ course.status }}</span></div>
+                <div><strong>Lessons:</strong> {{ course.total_lessons }}</div>
+            </div>
+            {% if course.what_you_will_learn %}
+            <div style="margin-top:16px;">
+                <strong>What You'll Learn:</strong>
+                <ul style="margin-top:8px;padding-left:20px;color:#4b5563;">
+                    {% for item in course.what_you_will_learn.split('\n') if item.strip() %}
+                    <li>{{ item.strip() }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% if course.requirements %}
+            <div style="margin-top:16px;">
+                <strong>Requirements:</strong>
+                <ul style="margin-top:8px;padding-left:20px;color:#4b5563;">
+                    {% for item in course.requirements.split('\n') if item.strip() %}
+                    <li>{{ item.strip() }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    <div style="margin-top:32px;padding-top:24px;border-top:1px solid #e5e7eb;display:flex;gap:12px;">
+        <button class="btn-primary" onclick="approve({{ course.id }})">
+            <i data-lucide="check" class="icon" style="width:18px;height:18px;"></i> Approve
+        </button>
+        <button class="btn-danger" onclick="reject({{ course.id }})">
+            <i data-lucide="x" class="icon" style="width:18px;height:18px;"></i> Reject
+        </button>
+        <a href="{{ url_for('admin_pending_courses') }}" class="btn-secondary">Cancel</a>
+    </div>
+</div>
+
+<script>
+function approve(id) {
+    if (confirm('Approve this course?')) {
+        fetch('/admin/courses/' + id + '/approve', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                location.href = "{{ url_for('admin_pending_courses') }}";
+            } else {
+                alert(data.message);
+            }
+        });
+    }
+}
+function reject(id) {
+    const reason = prompt('Enter rejection reason:');
+    if (reason === null) return;
+    if (reason.trim() === '') {
+        alert('Reason is required.');
+        return;
+    }
+    fetch('/admin/courses/' + id + '/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            location.href = "{{ url_for('admin_pending_courses') }}";
+        } else {
+            alert(data.message);
+        }
+    });
+}
+</script>
+{% endblock %}

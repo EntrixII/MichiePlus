@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ item.title if item else 'Purchase Details' }} | Bizspark</title>
+    <title>{{ item.title if item else 'Purchase Details' }} | Michie Bizspark</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -44,6 +44,15 @@
         .card .cart-items .item-row .info .title { font-weight: 600; }
         .card .cart-items .item-row .info .vendor { font-size: 13px; color: #6b7280; }
         .card .cart-items .item-row .price { font-weight: 600; color: #0000c1; }
+        .card .cart-items .item-row .btn-item-action {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 8px 14px; border-radius: 8px; font-weight: 600;
+            font-size: 13px; text-decoration: none; white-space: nowrap;
+            background: #0000c1; color: white; transition: 0.2s ease;
+        }
+        .card .cart-items .item-row .btn-item-action:hover { background: #00008f; }
+        .card .cart-items .item-row .btn-item-action.btn-learn-item { background: #dbeafe; color: #1e40af; }
+        .card .cart-items .item-row .btn-item-action.btn-learn-item:hover { background: #bfdbfe; }
 
         @media (max-width: 480px) {
             .card { padding: 24px 20px; }
@@ -85,6 +94,17 @@
                             <div class="vendor">{{ cart_item.vendor_name }}</div>
                         </div>
                         <div class="price">₦{{ cart_item.price }}</div>
+                        {% if cart_item.item_type == 'product' and cart_item.is_digital %}
+                            <a href="{{ url_for('download_product', product_id=cart_item.item_id) }}" class="btn-item-action">
+                                <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+                                Download
+                            </a>
+                        {% elif cart_item.item_type == 'course' %}
+                            <a href="{{ url_for('learning_detail', course_id=cart_item.item_id) }}" class="btn-item-action btn-learn-item">
+                                <i data-lucide="book-open" style="width: 14px; height: 14px;"></i>
+                                Start Learning
+                            </a>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
@@ -109,7 +129,7 @@
                 <div class="meta">
                     <div class="row"><span class="label">Price</span><span class="value">₦{{ item.price }}</span></div>
                     <div class="row"><span class="label">Category</span><span class="value">{{ item.category }}</span></div>
-                    <div class="row"><span class="label">Purchased</span><span class="value">{{ purchase.created_at[:10] if purchase.created_at else 'N/A' }}</span></div>
+                    <div class="row"><span class="label">Purchased</span><span class="value">{{ purchase.created_at.strftime('%d %b %Y') if purchase.created_at else 'N/A' }}</span></div>
                     {% if item_type == 'product' %}
                         <div class="row"><span class="label">Type</span><span class="value">{{ 'Digital' if item.is_digital else 'Physical' }}</span></div>
                     {% elif item_type == 'course' %}
@@ -123,7 +143,7 @@
                         Download Product
                     </a>
                 {% elif item_type == 'course' %}
-                    <a href="{{ url_for('learning') }}" class="btn-download">
+                    <a href="{{ url_for('learning_detail', course_id=item.id) }}" class="btn-download">
                         <i data-lucide="book-open" class="icon" style="width:20px; height:20px;"></i>
                         Start Learning
                     </a>

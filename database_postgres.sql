@@ -1,5 +1,5 @@
 -- ============================================
--- bizspark DATABASE SCHEMA
+-- Michie Bizspark DATABASE SCHEMA
 -- PostgreSQL
 -- Generated to match app.py's init_db() exactly
 -- ============================================

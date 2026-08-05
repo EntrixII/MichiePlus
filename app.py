@@ -100,7 +100,7 @@ if os.environ.get('FLASK_ENV') != 'production':
 # ============================================
 
 # Database configuration - PostgreSQL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/Bizspark')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/bizspark')
 
 # ============================================
 # OAUTH CONFIGURATION - GOOGLE
@@ -129,7 +129,7 @@ if os.environ.get("GOOGLE_OAUTH_CLIENT_ID") and os.environ.get("GOOGLE_OAUTH_CLI
     )
 
     # Force SSL verification off on the blueprint's session
-    google_blueprint.session.verify = False
+    google_blueprint.session.verify = True
     google_blueprint.session.trust_env = False
 
     # --- ADD THIS: Patch the session's request method directly ---
@@ -264,7 +264,7 @@ def merge_session_cart_to_db(user_id):
     # Clear session cart
     session.pop('cart', None)
 
-def get_db_connection(timeout=120):
+def get_db_connection(timeout=15):
     """Create a database connection with optional timeout."""
     conn = psycopg2.connect(
         DATABASE_URL,
@@ -273,6 +273,83 @@ def get_db_connection(timeout=120):
     )
     return conn
 
+
+def update_moderation_status(model, item_id, new_status, admin_id=None, rejection_reason=None):
+    """
+    Update the moderation status of a product or course.
+    model: 'product' or 'course'
+    item_id: integer ID
+    new_status: one of pending_review, approved, rejected, draft, archived, disabled
+    admin_id: ID of the admin who performed the action (optional)
+    rejection_reason: required if new_status == 'rejected'
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Determine table and set sync columns
+    if model == 'product':
+        table = 'products'
+        id_col = 'id'
+    elif model == 'course':
+        table = 'courses'
+        id_col = 'id'
+    else:
+        raise ValueError("model must be 'product' or 'course'")
+
+    # Validation: if rejecting, reason is required
+    if new_status == 'rejected' and not rejection_reason:
+        raise ValueError("Rejection reason is required when rejecting.")
+
+    # Build UPDATE query
+    updates = ['status = %s', 'rejection_reason = %s']
+    params = [new_status, rejection_reason]
+
+    # If approved, set approved_by and approved_at
+    if new_status == 'approved':
+        updates.append('approved_by = %s')
+        updates.append('approved_at = CURRENT_TIMESTAMP')
+        params.extend([admin_id])
+        # Set legacy columns to visible
+        updates.append('is_approved = 1')
+        updates.append('is_active = 1')
+    else:
+        # For non-approved statuses, hide from marketplace
+        updates.append('is_approved = 0')
+        updates.append('is_active = 0')
+
+    query = f"UPDATE {table} SET {', '.join(updates)} WHERE {id_col} = %s"
+    params.append(item_id)
+
+    cursor.execute(query, params)
+    conn.commit()
+    conn.close()
+
+
+def update_vendor_verification(vendor_id, new_status, rejection_reason=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    updates = ['verification_status = %s']
+    params = [new_status]
+
+    if new_status == 'rejected' and not rejection_reason:
+        raise ValueError("Rejection reason required for rejecting vendor.")
+
+    if rejection_reason:
+        updates.append('verification_rejection_reason = %s')
+        params.append(rejection_reason)
+
+    if new_status == 'verified':
+        updates.append('business_verified = 1')
+    else:
+        updates.append('business_verified = 0')
+
+    query = f"UPDATE vendor_profiles SET {', '.join(updates)} WHERE user_id = %s"
+    params.append(vendor_id)
+
+    cursor.execute(query, params)
+    conn.commit()
+    conn.close()
 
 def send_vendor_notification(vendor_email, vendor_name, subject, message, action_type):
     """Send a notification email to a vendor about admin actions."""
@@ -307,7 +384,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     <body>
         <div class="container">
             <div class="header">
-                <h1>🔔 Bizspark Notification</h1>
+                <h1>🔔 Michie Bizspark Notification</h1>
             </div>
             <div class="content">
                 <h2>Hi {vendor_name},</h2>
@@ -315,7 +392,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
                 <p style="color: #666; font-size: 14px;">If you have any questions, please contact our support team.</p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -323,13 +400,13 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     """
 
     text_content = f"""
-    Bizspark Notification
+    Michie Bizspark Notification
 
     Hi {vendor_name},
 
     {message}
 
-    © 2026 Bizspark
+    © 2026 Michie Bizspark
     """
 
     try:
@@ -353,6 +430,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
         print(f"❌ Failed to send vendor notification: {e}")
         return False
 
+
 def init_db():
     """Initialize database with tables if they don't exist"""
     conn = get_db_connection()
@@ -361,19 +439,20 @@ def init_db():
     # ============================================
     # HELPER: Migrate columns safely
     # ============================================
+    def column_exists(cursor, table_name, column_name):
+        cursor.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = %s AND column_name = %s",
+            (table_name, column_name)
+        )
+        return cursor.fetchone() is not None
+
     def migrate_columns(cursor, table_name, columns_to_add):
         """Add missing columns to a table if they don't exist"""
-        cursor.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
-            (table_name,)
-        )
-        existing_columns = [row['column_name'] for row in cursor.fetchall()]
-
         for col_name, alter_stmt in columns_to_add.items():
-            if col_name not in existing_columns:
+            if not column_exists(cursor, table_name, col_name):
                 try:
                     cursor.execute(alter_stmt)
-                    conn.commit()
                     print(f"✅ {col_name} column added to {table_name}")
                 except psycopg2.Error as e:
                     conn.rollback()
@@ -499,6 +578,8 @@ def init_db():
                 rating DECIMAL(3,2) DEFAULT 0,
                 reviews_count INTEGER DEFAULT 0,
                 paystack_recipient_code VARCHAR(100),
+                verification_status VARCHAR(20) DEFAULT 'pending',
+                verification_rejection_reason TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -517,7 +598,9 @@ def init_db():
             'cover_image': "ALTER TABLE vendor_profiles ADD COLUMN cover_image VARCHAR(500)",
             'rating': "ALTER TABLE vendor_profiles ADD COLUMN rating DECIMAL(3,2) DEFAULT 0",
             'reviews_count': "ALTER TABLE vendor_profiles ADD COLUMN reviews_count INTEGER DEFAULT 0",
-            'paystack_recipient_code': "ALTER TABLE vendor_profiles ADD COLUMN paystack_recipient_code VARCHAR(100)"
+            'paystack_recipient_code': "ALTER TABLE vendor_profiles ADD COLUMN paystack_recipient_code VARCHAR(100)",
+            'verification_status': "ALTER TABLE vendor_profiles ADD COLUMN verification_status VARCHAR(20) DEFAULT 'pending'",
+            'verification_rejection_reason': "ALTER TABLE vendor_profiles ADD COLUMN verification_rejection_reason TEXT"
         })
 
     # ============================================
@@ -606,6 +689,11 @@ def init_db():
                 estimated_delivery VARCHAR(100),
                 shipping_cost DECIMAL(15,2) DEFAULT 0,
                 stock_quantity INTEGER DEFAULT NULL,
+                is_featured INTEGER DEFAULT 0,
+                status VARCHAR(20) DEFAULT 'pending_review',
+                rejection_reason TEXT,
+                approved_by INTEGER REFERENCES users(id),
+                approved_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vendor_id) REFERENCES users(id) ON DELETE CASCADE
@@ -620,7 +708,11 @@ def init_db():
             'estimated_delivery': "ALTER TABLE products ADD COLUMN estimated_delivery VARCHAR(100)",
             'shipping_cost': "ALTER TABLE products ADD COLUMN shipping_cost DECIMAL(15,2) DEFAULT 0",
             'stock_quantity': "ALTER TABLE products ADD COLUMN stock_quantity INTEGER DEFAULT NULL",
-            'is_featured': "ALTER TABLE products ADD COLUMN is_featured INTEGER DEFAULT 0"
+            'is_featured': "ALTER TABLE products ADD COLUMN is_featured INTEGER DEFAULT 0",
+            'status': "ALTER TABLE products ADD COLUMN status VARCHAR(20) DEFAULT 'pending_review'",
+            'rejection_reason': "ALTER TABLE products ADD COLUMN rejection_reason TEXT",
+            'approved_by': "ALTER TABLE products ADD COLUMN approved_by INTEGER REFERENCES users(id)",
+            'approved_at': "ALTER TABLE products ADD COLUMN approved_at TIMESTAMP"
         })
 
     # ============================================
@@ -649,6 +741,11 @@ def init_db():
                 is_active INTEGER DEFAULT 1,
                 is_approved INTEGER DEFAULT 0,
                 is_digital INTEGER DEFAULT 1,
+                is_featured INTEGER DEFAULT 0,
+                status VARCHAR(20) DEFAULT 'pending_review',
+                rejection_reason TEXT,
+                approved_by INTEGER REFERENCES users(id),
+                approved_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vendor_id) REFERENCES users(id) ON DELETE CASCADE
@@ -658,7 +755,11 @@ def init_db():
     else:
         migrate_columns(cursor, "courses", {
             'is_digital': "ALTER TABLE courses ADD COLUMN is_digital INTEGER DEFAULT 1",
-            'is_featured': "ALTER TABLE courses ADD COLUMN is_featured INTEGER DEFAULT 0"
+            'is_featured': "ALTER TABLE courses ADD COLUMN is_featured INTEGER DEFAULT 0",
+            'status': "ALTER TABLE courses ADD COLUMN status VARCHAR(20) DEFAULT 'pending_review'",
+            'rejection_reason': "ALTER TABLE courses ADD COLUMN rejection_reason TEXT",
+            'approved_by': "ALTER TABLE courses ADD COLUMN approved_by INTEGER REFERENCES users(id)",
+            'approved_at': "ALTER TABLE courses ADD COLUMN approved_at TIMESTAMP"
         })
 
     # ============================================
@@ -789,7 +890,7 @@ def init_db():
         print("✅ conversations table created")
 
     # ============================================
-    # MESSAGES TABLE (with attachment column)
+    # MESSAGES TABLE
     # ============================================
     cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='messages'")
     if not cursor.fetchone():
@@ -1082,10 +1183,8 @@ def init_db():
         print("✅ community_comments table created")
 
     # ============================================
-    # ADMIN TABLES
+    # ADMIN LOGS TABLE
     # ============================================
-
-    # admin_logs
     cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='admin_logs'")
     if not cursor.fetchone():
         cursor.execute('''
@@ -1101,7 +1200,9 @@ def init_db():
         ''')
         print("✅ admin_logs table created")
 
-    # email_logs
+    # ============================================
+    # EMAIL LOGS TABLE
+    # ============================================
     cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='email_logs'")
     if not cursor.fetchone():
         cursor.execute('''
@@ -1117,7 +1218,9 @@ def init_db():
         ''')
         print("✅ email_logs table created")
 
-    # settings
+    # ============================================
+    # SETTINGS TABLE
+    # ============================================
     cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='settings'")
     if not cursor.fetchone():
         cursor.execute('''
@@ -1131,6 +1234,39 @@ def init_db():
         cursor.execute("INSERT INTO settings (key, value) VALUES ('commission_rate', '30') ON CONFLICT (key) DO NOTHING")
         cursor.execute("INSERT INTO settings (key, value) VALUES ('min_withdrawal', '5000') ON CONFLICT (key) DO NOTHING")
         print("✅ settings table created with defaults")
+
+    # ============================================
+    # DATA MIGRATION – Set initial statuses based on existing flags
+    # ============================================
+    # Only run updates if the columns exist (safer for existing databases)
+    if column_exists(cursor, 'products', 'status'):
+        cursor.execute("UPDATE products SET status = 'approved' WHERE is_approved = 1 AND is_active = 1")
+        cursor.execute("UPDATE products SET status = 'pending_review' WHERE is_approved = 0")
+    else:
+        print("⚠️ 'status' column missing on products – skipping status migration")
+
+    if column_exists(cursor, 'courses', 'status'):
+        cursor.execute("UPDATE courses SET status = 'approved' WHERE is_approved = 1 AND is_active = 1")
+        cursor.execute("UPDATE courses SET status = 'pending_review' WHERE is_approved = 0")
+    else:
+        print("⚠️ 'status' column missing on courses – skipping status migration")
+
+    if column_exists(cursor, 'vendor_profiles', 'verification_status'):
+        cursor.execute("UPDATE vendor_profiles SET verification_status = 'verified' WHERE business_verified = 1")
+        cursor.execute("UPDATE vendor_profiles SET verification_status = 'pending' WHERE business_verified = 0")
+    else:
+        print("⚠️ 'verification_status' column missing on vendor_profiles – skipping migration")
+
+    # ============================================
+    # CREATE INDEXES FOR PERFORMANCE
+    # ============================================
+    # Only create indexes if the columns exist
+    if column_exists(cursor, 'products', 'status'):
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)")
+    if column_exists(cursor, 'courses', 'status'):
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status)")
+    if column_exists(cursor, 'vendor_profiles', 'verification_status'):
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vendor_profiles_verification_status ON vendor_profiles(verification_status)")
 
     # ============================================
     # COMMIT AND CLOSE
@@ -1798,7 +1934,7 @@ def vendor_edit_product(product_id):
 
                 file_path = os.path.join(upload_dir, unique_filename)
                 file.save(file_path)
-                file_url = f"../uploads/{user_id}/{unique_filename}"
+                file_url = f"/static/uploads/{user_id}/{unique_filename}"
 
         # Update cover image if new cover uploaded
         cover_filename = current_product['cover_image']
@@ -1813,7 +1949,7 @@ def vendor_edit_product(product_id):
 
                 cover_path = os.path.join(upload_dir, unique_cover)
                 cover_image.save(cover_path)
-                cover_filename = f"../uploads/{user_id}/{unique_cover}"
+                cover_filename = f"/static/uploads/{user_id}/{unique_cover}"
 
         # Update product in database
         cursor.execute('''
@@ -2493,7 +2629,7 @@ def chat_upload():
     file.save(file_path)
 
     # 6. Return the public URL
-    file_url = f"../uploads/chat/{user_id}/{unique_filename}"
+    file_url = f"/static/uploads/chat/{user_id}/{unique_filename}"
     return jsonify({'success': True, 'file_url': file_url})
 # ============================================
 # VENDOR ORDERS
@@ -2522,255 +2658,121 @@ def admin_required(f):
 
 
 # ============================================
-# ADMIN - WITHDRAWAL ACTION ROUTES
+# ADMIN ROUTES
+# ============================================
+# ============================================
+# ADMIN – Moderation Routes (new)
 # ============================================
 
-@app.route('/admin/withdrawals/<int:payout_id>/approve', methods=['POST'])
+@app.route('/admin/products/pending')
 @admin_required
-def admin_approve_withdrawal(payout_id):
+def admin_pending_products():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT pr.*, u.email, u.full_name
-        FROM payout_requests pr
-        JOIN users u ON pr.user_id = u.id
-        WHERE pr.id = %s AND pr.status = 'pending'
-    """, (payout_id,))
-    payout = cursor.fetchone()
-    if not payout:
-        conn.close()
-        flash('Withdrawal request not found or already processed.', 'error')
-        return redirect(url_for('admin_pending_withdrawals'))
-
-    vendor_id = payout['user_id']
-    amount = payout['amount']
-
-    cursor.execute("""
-        UPDATE payout_requests 
-        SET status = 'completed', admin_id = %s, processed_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-    """, (session['user_id'], payout_id))
-
-    cursor.execute("""
-        UPDATE wallet 
-        SET pending_balance = pending_balance - %s,
-            total_withdrawn = total_withdrawn + %s
-        WHERE user_id = %s
-    """, (amount, amount, vendor_id))
-
-    cursor.execute("""
-        INSERT INTO transactions (user_id, transaction_type, amount, net_amount, status, description)
-        VALUES (%s, 'withdrawal', %s, %s, 'completed', %s)
-    """, (vendor_id, amount, -amount, f'Withdrawal approved (Request #{payout_id})'))
-
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'approve_withdrawal', f'Approved withdrawal #{payout_id} for vendor {vendor_id}'))
-    conn.commit()
-    conn.close()
-
-    send_vendor_notification(
-        vendor_email=payout['email'],
-        vendor_name=payout['full_name'],
-        subject='✅ Withdrawal Request Approved',
-        message=f'Your withdrawal request of ₦{amount} has been approved and is being processed. It will reflect in your bank account within 1-3 business days.',
-        action_type='withdrawal_approved'
-    )
-
-    flash('Withdrawal approved. Vendor notified.', 'success')
-    return redirect(url_for('admin_pending_withdrawals'))
-
-
-@app.route('/admin/withdrawals/<int:payout_id>/reject', methods=['POST'])
-@admin_required
-def admin_reject_withdrawal(payout_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT pr.*, u.email, u.full_name
-        FROM payout_requests pr
-        JOIN users u ON pr.user_id = u.id
-        WHERE pr.id = %s AND pr.status = 'pending'
-    """, (payout_id,))
-    payout = cursor.fetchone()
-    if not payout:
-        conn.close()
-        flash('Withdrawal request not found or already processed.', 'error')
-        return redirect(url_for('admin_pending_withdrawals'))
-
-    vendor_id = payout['user_id']
-    amount = payout['amount']
-
-    cursor.execute("""
-        UPDATE payout_requests 
-        SET status = 'rejected', admin_id = %s, processed_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-    """, (session['user_id'], payout_id))
-
-    cursor.execute("""
-        UPDATE wallet 
-        SET balance = balance + %s,
-            pending_balance = pending_balance - %s
-        WHERE user_id = %s
-    """, (amount, amount, vendor_id))
-
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'reject_withdrawal', f'Rejected withdrawal #{payout_id} for vendor {vendor_id}'))
-    conn.commit()
-    conn.close()
-
-    send_vendor_notification(
-        vendor_email=payout['email'],
-        vendor_name=payout['full_name'],
-        subject='❌ Withdrawal Request Rejected',
-        message=f'Your withdrawal request of ₦{amount} has been rejected. Please contact support for more information.',
-        action_type='withdrawal_rejected'
-    )
-
-    flash('Withdrawal rejected. Vendor notified.', 'warning')
-    return redirect(url_for('admin_pending_withdrawals'))
-
-@app.route('/admin/products/<int:product_id>/approve', methods=['POST'])
-@admin_required
-def admin_approve_product(product_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.vendor_id, p.title, u.email, u.full_name
+        SELECT p.*, u.full_name as vendor_name
         FROM products p
         JOIN users u ON p.vendor_id = u.id
-        WHERE p.id = %s
-    """, (product_id,))
-    product = cursor.fetchone()
-    if not product:
-        conn.close()
-        flash('Product not found.', 'error')
-        return redirect(url_for('admin_pending_products'))
+        WHERE p.status = 'pending_review'
+        ORDER BY p.created_at DESC
+    """)
+    products = cursor.fetchall()
+    conn.close()
+    return render_template('admin/pending-products.html', products=products)
 
-    cursor.execute("UPDATE products SET is_approved = 1 WHERE id = %s", (product_id,))
-    conn.commit()
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'approve_product', f'Approved product ID {product_id}'))
-    conn.commit()
+@app.route('/admin/dashboard')
+@admin_required
+def admin_dashboard():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # ===== Total users =====
+    cursor.execute("SELECT COUNT(*) as count FROM users")
+    total_users = cursor.fetchone()['count']
+
+    # ===== New users this week =====
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE created_at >= NOW() - INTERVAL '7 days'")
+    new_users = cursor.fetchone()['count']
+
+    # ===== Total products & courses =====
+    cursor.execute("SELECT COUNT(*) as count FROM products")
+    total_products = cursor.fetchone()['count']
+    cursor.execute("SELECT COUNT(*) as count FROM courses")
+    total_courses = cursor.fetchone()['count']
+
+    # ===== Moderation counts =====
+    cursor.execute("SELECT COUNT(*) as count FROM products WHERE status = 'pending_review'")
+    pending_products = cursor.fetchone()['count']
+    cursor.execute("SELECT COUNT(*) as count FROM courses WHERE status = 'pending_review'")
+    pending_courses = cursor.fetchone()['count']
+    cursor.execute("SELECT COUNT(*) as count FROM vendor_profiles WHERE verification_status = 'pending'")
+    pending_vendors = cursor.fetchone()['count']
+    cursor.execute("SELECT COUNT(*) as count FROM products WHERE status = 'approved'")
+    approved_products = cursor.fetchone()['count']
+    cursor.execute("SELECT COUNT(*) as count FROM courses WHERE status = 'approved'")
+    approved_courses = cursor.fetchone()['count']
+
+    # ===== Pending withdrawals =====
+    cursor.execute("SELECT COUNT(*) as count FROM payout_requests WHERE status = 'pending'")
+    pending_withdrawals = cursor.fetchone()['count']
+
+    # ===== Platform revenue =====
+    cursor.execute("SELECT COALESCE(SUM(platform_fee), 0) as revenue FROM orders WHERE status = 'completed' AND payment_status = 'paid'")
+    platform_revenue = cursor.fetchone()['revenue'] or 0
+
+    # ===== Total orders =====
+    cursor.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'completed' AND payment_status = 'paid'")
+    total_orders = cursor.fetchone()['count']
+
+    # ===== Recent activity =====
+    cursor.execute("""
+        SELECT al.*, u.full_name as admin_name
+        FROM admin_logs al
+        JOIN users u ON al.admin_id = u.id
+        ORDER BY al.created_at DESC
+        LIMIT 5
+    """)
+    recent_activity = cursor.fetchall()
+
     conn.close()
 
-    # Send notification
-    send_vendor_notification(
-        vendor_email=product['email'],
-        vendor_name=product['full_name'],
-        subject='✅ Your Product Has Been Approved',
-        message=f'Your product "{product["title"]}" has been approved and is now live on the marketplace.',
-        action_type='product_approved'
+    # ✅ Add current date
+    from datetime import datetime
+    current_date = datetime.now().strftime('%B %d, %Y')
+
+    return render_template(
+        'admin/dashboard.html',
+        total_users=total_users,
+        new_users=new_users,
+        total_products=total_products,
+        total_courses=total_courses,
+        pending_products=pending_products,
+        pending_courses=pending_courses,
+        pending_vendors=pending_vendors,
+        approved_products=approved_products,
+        approved_courses=approved_courses,
+        pending_withdrawals=pending_withdrawals,
+        platform_revenue=platform_revenue,
+        total_orders=total_orders,
+        recent_activity=recent_activity,
+        current_date=current_date
     )
 
-    flash('Product approved successfully. Vendor notified.', 'success')
-    return redirect(url_for('admin_pending_products'))
-
-@app.route('/admin/courses/<int:course_id>/reject', methods=['POST'])
+@app.route('/admin/courses/pending')
 @admin_required
-def admin_reject_course(course_id):
+def admin_pending_courses():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT c.vendor_id, c.title, u.email, u.full_name
+        SELECT c.*, u.full_name as vendor_name
         FROM courses c
         JOIN users u ON c.vendor_id = u.id
-        WHERE c.id = %s
-    """, (course_id,))
-    course = cursor.fetchone()
-    if not course:
-        conn.close()
-        flash('Course not found.', 'error')
-        return redirect(url_for('admin_pending_courses'))
-
-    cursor.execute("DELETE FROM courses WHERE id = %s", (course_id,))
-    conn.commit()
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'reject_course', f'Rejected course ID {course_id}'))
-    conn.commit()
+        WHERE c.status = 'pending_review'
+        ORDER BY c.created_at DESC
+    """)
+    courses = cursor.fetchall()
     conn.close()
-
-    send_vendor_notification(
-        vendor_email=course['email'],
-        vendor_name=course['full_name'],
-        subject='❌ Your Course Was Not Approved',
-        message=f'Your course "{course["title"]}" was rejected. Please review the guidelines and resubmit.',
-        action_type='course_rejected'
-    )
-
-    flash('Course rejected and removed. Vendor notified.', 'warning')
-    return redirect(url_for('admin_pending_courses'))
-
-# Similarly for courses
-@app.route('/admin/courses/<int:course_id>/approve', methods=['POST'])
-@admin_required
-def admin_approve_course(course_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT c.vendor_id, c.title, u.email, u.full_name
-        FROM courses c
-        JOIN users u ON c.vendor_id = u.id
-        WHERE c.id = %s
-    """, (course_id,))
-    course = cursor.fetchone()
-    if not course:
-        conn.close()
-        flash('Course not found.', 'error')
-        return redirect(url_for('admin_pending_courses'))
-
-    cursor.execute("UPDATE courses SET is_approved = 1 WHERE id = %s", (course_id,))
-    conn.commit()
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'approve_course', f'Approved course ID {course_id}'))
-    conn.commit()
-    conn.close()
-
-    send_vendor_notification(
-        vendor_email=course['email'],
-        vendor_name=course['full_name'],
-        subject='✅ Your Course Has Been Approved',
-        message=f'Your course "{course["title"]}" has been approved and is now available for students.',
-        action_type='course_approved'
-    )
-
-    flash('Course approved successfully. Vendor notified.', 'success')
-    return redirect(url_for('admin_pending_courses'))
-
-
-@app.route('/admin/products/<int:product_id>/reject', methods=['POST'])
-@admin_required
-def admin_reject_product(product_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.vendor_id, p.title, u.email, u.full_name
-        FROM products p
-        JOIN users u ON p.vendor_id = u.id
-        WHERE p.id = %s
-    """, (product_id,))
-    product = cursor.fetchone()
-    if not product:
-        conn.close()
-        flash('Product not found.', 'error')
-        return redirect(url_for('admin_pending_products'))
-
-    cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
-    conn.commit()
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'reject_product', f'Rejected product ID {product_id}'))
-    conn.commit()
-    conn.close()
-
-    send_vendor_notification(
-        vendor_email=product['email'],
-        vendor_name=product['full_name'],
-        subject='❌ Your Product Was Not Approved',
-        message=f'Your product "{product["title"]}" was rejected. Please review the guidelines and resubmit.',
-        action_type='product_rejected'
-    )
-
-    flash('Product rejected and removed. Vendor notified.', 'warning')
-    return redirect(url_for('admin_pending_products'))
+    return render_template('admin/pending-courses.html', courses=courses)
 
 @app.route('/admin/withdrawals/pending')
 @admin_required
@@ -2789,106 +2791,314 @@ def admin_pending_withdrawals():
     conn.close()
     return render_template('admin/pending-withdrawals.html', withdrawals=withdrawals)
 
-@app.route('/admin/dashboard')
+@app.route('/admin/products/<int:product_id>/detail')
 @admin_required
-def admin_dashboard():
+def admin_product_detail(product_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.*, u.full_name as vendor_name, u.email as vendor_email
+        FROM products p
+        JOIN users u ON p.vendor_id = u.id
+        WHERE p.id = %s
+    """, (product_id,))
+    product = cursor.fetchone()
+    conn.close()
+    if not product:
+        flash('Product not found.', 'error')
+        return redirect(url_for('admin_pending_products'))
+    return render_template('admin/product-detail.html', product=product)
+
+
+@app.route('/admin/withdrawals')
+@admin_required
+def admin_withdrawals():
+    """Display all withdrawal requests with filter by status."""
+    status_filter = request.args.get('status', 'all')
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Total users
-    cursor.execute("SELECT COUNT(*) as count FROM users")
-    total_users = cursor.fetchone()['count']
+    # Build query with optional status filter
+    base_query = """
+        SELECT pr.*, u.full_name as vendor_name, vp.bank_name, vp.bank_account_number, vp.bank_account_name
+        FROM payout_requests pr
+        JOIN users u ON pr.user_id = u.id
+        JOIN vendor_profiles vp ON u.id = vp.user_id
+    """
+    if status_filter != 'all':
+        base_query += " WHERE pr.status = %s"
+        cursor.execute(base_query + " ORDER BY pr.created_at DESC", (status_filter,))
+    else:
+        cursor.execute(base_query + " ORDER BY pr.created_at DESC")
 
-    # New users this week
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE created_at >= NOW() - INTERVAL '7 days'")
-    new_users = cursor.fetchone()['count']
+    withdrawals = cursor.fetchall()
+    conn.close()
 
-    # Total products
-    cursor.execute("SELECT COUNT(*) as count FROM products")
-    total_products = cursor.fetchone()['count']
+    return render_template(
+        'admin/withdrawals.html',
+        withdrawals=withdrawals,
+        current_status=status_filter
+    )
 
-    # Total courses
-    cursor.execute("SELECT COUNT(*) as count FROM courses")
-    total_courses = cursor.fetchone()['count']
-
-    # Pending products
-    cursor.execute("SELECT COUNT(*) as count FROM products WHERE is_approved = 0")
-    pending_products = cursor.fetchone()['count']
-
-    # Pending courses
-    cursor.execute("SELECT COUNT(*) as count FROM courses WHERE is_approved = 0")
-    pending_courses = cursor.fetchone()['count']
-
-    # Pending withdrawals
-    cursor.execute("SELECT COUNT(*) as count FROM payout_requests WHERE status = 'pending'")
-    pending_withdrawals = cursor.fetchone()['count']
-
-    # Platform revenue (30% of all completed sales)
-    cursor.execute("SELECT COALESCE(SUM(platform_fee), 0) as revenue FROM orders WHERE status = 'completed' AND payment_status = 'paid'")
-    platform_revenue = cursor.fetchone()['revenue'] or 0
-
-    # Total orders
-    cursor.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'completed' AND payment_status = 'paid'")
-    total_orders = cursor.fetchone()['count']
-
-    # Recent activity (last 5 admin logs)
+@app.route('/admin/courses/<int:course_id>/detail')
+@admin_required
+def admin_course_detail(course_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
     cursor.execute("""
-        SELECT al.*, u.full_name as admin_name 
+        SELECT c.*, u.full_name as vendor_name, u.email as vendor_email
+        FROM courses c
+        JOIN users u ON c.vendor_id = u.id
+        WHERE c.id = %s
+    """, (course_id,))
+    course = cursor.fetchone()
+    conn.close()
+    if not course:
+        flash('Course not found.', 'error')
+        return redirect(url_for('admin_pending_courses'))
+    return render_template('admin/course-detail.html', course=course)
+
+@app.route('/admin/users')
+@admin_required
+def admin_users():
+    """Display all users with search and filter options."""
+    search = request.args.get('search', '').strip()
+    user_type = request.args.get('user_type', 'all')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Build query with optional filters
+    base_query = """
+        SELECT u.id, u.email, u.full_name, u.user_type, u.is_verified, u.is_active, u.created_at,
+               cp.username,
+               vp.business_name
+        FROM users u
+        LEFT JOIN customer_profiles cp ON u.id = cp.user_id
+        LEFT JOIN vendor_profiles vp ON u.id = vp.user_id
+        WHERE 1=1
+    """
+    params = []
+
+    if search:
+        base_query += " AND (u.email ILIKE %s OR u.full_name ILIKE %s OR cp.username ILIKE %s OR vp.business_name ILIKE %s)"
+        search_term = f"%{search}%"
+        params.extend([search_term, search_term, search_term, search_term])
+
+    if user_type != 'all':
+        base_query += " AND u.user_type = %s"
+        params.append(user_type)
+
+    base_query += " ORDER BY u.created_at DESC"
+    cursor.execute(base_query, params)
+    users = cursor.fetchall()
+    conn.close()
+
+    return render_template(
+        'admin/users.html',
+        users=users,
+        search=search,
+        user_type=user_type
+    )
+
+@app.route('/admin/products/<int:product_id>/approve', methods=['POST'])
+@admin_required
+def admin_approve_product(product_id):
+    admin_id = session['user_id']
+    try:
+        update_moderation_status('product', product_id, 'approved', admin_id)
+        log_admin_action(admin_id, 'approve_product', f'Approved product #{product_id}')
+        return jsonify({'success': True, 'message': 'Product approved.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
+@admin_required
+def admin_toggle_user(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_active FROM users WHERE id = %s", (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        conn.close()
+        flash('User not found.', 'error')
+        return redirect(url_for('admin_users'))
+    new_status = 0 if user['is_active'] else 1
+    cursor.execute("UPDATE users SET is_active = %s WHERE id = %s", (new_status, user_id))
+    conn.commit()
+    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
+                   (session['user_id'], 'toggle_user', f'Toggled user {user_id} to {new_status}'))
+    conn.commit()
+    conn.close()
+    flash('User status updated.', 'success')
+    return redirect(url_for('admin_users'))
+
+@app.route('/admin/settings', methods=['GET', 'POST'])
+@admin_required
+def admin_settings():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if request.method == 'POST':
+        commission = request.form.get('commission_rate')
+        min_withdrawal = request.form.get('min_withdrawal')
+        support_phone = request.form.get('support_phone', '').strip()
+        support_button_text = request.form.get('support_button_text', '').strip()
+
+        # Use INSERT ... ON CONFLICT to update or insert
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES ('commission_rate', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (commission,))
+
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES ('min_withdrawal', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (min_withdrawal,))
+
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES ('support_phone', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (support_phone,))
+
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES ('support_button_text', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (support_button_text,))
+
+        conn.commit()
+        cursor.execute("""
+            INSERT INTO admin_logs (admin_id, action, details)
+            VALUES (%s, %s, %s)
+        """, (session['user_id'], 'update_settings', 'Updated platform and support settings'))
+        conn.commit()
+        conn.close()
+
+        flash('Settings updated successfully.', 'success')
+        return redirect(url_for('admin_settings'))
+
+    # GET: fetch all settings
+    cursor.execute("SELECT key, value FROM settings")
+    settings = {row['key']: row['value'] for row in cursor.fetchall()}
+    conn.close()
+
+    return render_template('admin/settings.html', settings=settings)
+
+@app.route('/admin/products/<int:product_id>/reject', methods=['POST'])
+@admin_required
+def admin_reject_product(product_id):
+    admin_id = session['user_id']
+    data = request.get_json()
+    reason = data.get('reason', '').strip()
+    if not reason:
+        return jsonify({'success': False, 'message': 'Rejection reason is required.'}), 400
+    try:
+        update_moderation_status('product', product_id, 'rejected', admin_id, reason)
+        log_admin_action(admin_id, 'reject_product', f'Rejected product #{product_id} with reason: {reason}')
+        return jsonify({'success': True, 'message': 'Product rejected.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/admin/courses/<int:course_id>/approve', methods=['POST'])
+@admin_required
+def admin_approve_course(course_id):
+    admin_id = session['user_id']
+    try:
+        update_moderation_status('course', course_id, 'approved', admin_id)
+        log_admin_action(admin_id, 'approve_course', f'Approved course #{course_id}')
+        return jsonify({'success': True, 'message': 'Course approved.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/admin/courses/<int:course_id>/reject', methods=['POST'])
+@admin_required
+def admin_reject_course(course_id):
+    admin_id = session['user_id']
+    data = request.get_json()
+    reason = data.get('reason', '').strip()
+    if not reason:
+        return jsonify({'success': False, 'message': 'Rejection reason is required.'}), 400
+    try:
+        update_moderation_status('course', course_id, 'rejected', admin_id, reason)
+        log_admin_action(admin_id, 'reject_course', f'Rejected course #{course_id} with reason: {reason}')
+        return jsonify({'success': True, 'message': 'Course rejected.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/admin/vendors/pending')
+@admin_required
+def admin_pending_vendors():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT v.*, u.full_name, u.email, u.created_at as user_since
+        FROM vendor_profiles v
+        JOIN users u ON v.user_id = u.id
+        WHERE v.verification_status = 'pending'
+        ORDER BY v.created_at ASC
+    """)
+    vendors = cursor.fetchall()
+    conn.close()
+    return render_template('admin/pending-vendors.html', vendors=vendors)
+
+
+@app.route('/admin/vendors/<int:vendor_id>/detail')
+@admin_required
+def admin_vendor_detail(vendor_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT v.*, u.full_name, u.email, u.created_at as user_since
+        FROM vendor_profiles v
+        JOIN users u ON v.user_id = u.id
+        WHERE v.user_id = %s
+    """, (vendor_id,))
+    vendor = cursor.fetchone()
+    conn.close()
+    if not vendor:
+        flash('Vendor not found.', 'error')
+        return redirect(url_for('admin_pending_vendors'))
+    return render_template('admin/vendor-detail.html', vendor=vendor)
+
+
+@app.route('/admin/vendors/<int:vendor_id>/verify', methods=['POST'])
+@admin_required
+def admin_verify_vendor(vendor_id):
+    admin_id = session['user_id']
+    data = request.get_json()
+    action = data.get('action')  # 'verify', 'reject', 'suspend'
+    reason = data.get('reason', '').strip()
+    if action not in ('verify', 'reject', 'suspend'):
+        return jsonify({'success': False, 'message': 'Invalid action.'}), 400
+    if action == 'reject' and not reason:
+        return jsonify({'success': False, 'message': 'Rejection reason is required.'}), 400
+    try:
+        update_vendor_verification(vendor_id, action, reason if action == 'reject' else None)
+        log_admin_action(admin_id, f'vendor_{action}', f'{action.capitalize()} vendor #{vendor_id}' + (f' with reason: {reason}' if reason else ''))
+        return jsonify({'success': True, 'message': f'Vendor {action}ed.'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/admin/logs')
+@admin_required
+def admin_logs():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT al.*, u.full_name as admin_name
         FROM admin_logs al
         JOIN users u ON al.admin_id = u.id
         ORDER BY al.created_at DESC
-        LIMIT 5
+        LIMIT 100
     """)
-    recent_activity = cursor.fetchall()
-
+    logs = cursor.fetchall()
     conn.close()
-
-    return render_template('admin/dashboard.html',
-                           total_users=total_users,
-                           new_users=new_users,
-                           total_products=total_products,
-                           total_courses=total_courses,
-                           pending_products=pending_products,
-                           pending_courses=pending_courses,
-                           pending_withdrawals=pending_withdrawals,
-                           platform_revenue=platform_revenue,
-                           total_orders=total_orders,
-                           recent_activity=recent_activity)
-
-
-
-@app.route('/admin/products/pending')
-@admin_required
-def admin_pending_products():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.*, u.full_name as vendor_name
-        FROM products p
-        JOIN users u ON p.vendor_id = u.id
-        WHERE p.is_approved = 0
-        ORDER BY p.created_at DESC
-    """)
-    products = cursor.fetchall()
-    conn.close()
-    return render_template('admin/pending-products.html', products=products)
-
-@app.route('/admin/courses/pending')
-@admin_required
-def admin_pending_courses():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT c.*, u.full_name as vendor_name
-        FROM courses c
-        JOIN users u ON c.vendor_id = u.id
-        WHERE c.is_approved = 0
-        ORDER BY c.created_at DESC
-    """)
-    courses = cursor.fetchall()
-    conn.close()
-    return render_template('admin/pending-courses.html', courses=courses)
-
+    return render_template('admin/logs.html', logs=logs)
 
 
 
@@ -4789,40 +4999,7 @@ def comment_on_post(post_id):
     })
 
 
-@app.route('/admin/users')
-@admin_required
-def admin_users():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, email, full_name, user_type, is_verified, is_active, created_at
-        FROM users
-        ORDER BY created_at DESC
-    """)
-    users = cursor.fetchall()
-    conn.close()
-    return render_template('admin/users.html', users=users)
 
-@app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
-@admin_required
-def admin_toggle_user(user_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_active FROM users WHERE id = %s", (user_id,))
-    user = cursor.fetchone()
-    if not user:
-        conn.close()
-        flash('User not found.', 'error')
-        return redirect(url_for('admin_users'))
-    new_status = 0 if user['is_active'] else 1
-    cursor.execute("UPDATE users SET is_active = %s WHERE id = %s", (new_status, user_id))
-    conn.commit()
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'toggle_user', f'Toggled user {user_id} to {new_status}'))
-    conn.commit()
-    conn.close()
-    flash('User status updated.', 'success')
-    return redirect(url_for('admin_users'))
 
 @app.route('/api/community/post/<int:post_id>/comments')
 @login_required
@@ -4966,7 +5143,7 @@ def vendor_upload_product():
 
             file_path = os.path.join(upload_dir, unique_filename)
             file.save(file_path)
-            file_url = f"../uploads/{user_id}/{unique_filename}"
+            file_url = f"/static/uploads/{user_id}/{unique_filename}"
 
         # ===== Handle Preview Video (Digital Only) =====
         preview_video_filename = None
@@ -4983,7 +5160,7 @@ def vendor_upload_product():
                         os.makedirs(upload_dir)
                     video_path = os.path.join(upload_dir, unique_video)
                     preview_video_file.save(video_path)
-                    preview_video_filename = f"../uploads/{user_id}/videos/{unique_video}"
+                    preview_video_filename = f"/static/uploads/{user_id}/videos/{unique_video}"
                     print(f"✅ Preview video saved to: {preview_video_filename}")
             elif preview_video_url:
                 preview_video_filename = preview_video_url
@@ -5000,7 +5177,7 @@ def vendor_upload_product():
                     os.makedirs(upload_dir)
                 cover_path = os.path.join(upload_dir, unique_cover)
                 cover_image.save(cover_path)
-                cover_filename = f"../uploads/{user_id}/{unique_cover}"
+                cover_filename = f"/static/uploads/{user_id}/{unique_cover}"
 
         # ===== Save to Database =====
         conn = get_db_connection()
@@ -5036,7 +5213,20 @@ def vendor_upload_product():
         conn.commit()
         conn.close()
 
-        flash('✅ Product uploaded successfully!', 'success')
+        # ===== Set initial moderation status to Pending Review =====
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE products
+            SET status = 'pending_review',
+                is_approved = 0,
+                is_active = 0
+            WHERE id = %s
+        """, (product_id,))
+        conn.commit()
+        conn.close()
+
+        flash('✅ Product uploaded successfully! It is now pending review.', 'success')
         return redirect(url_for('vendor_products'))
 
     return render_template('dashboard/vendor/upload-product.html')
@@ -5412,27 +5602,7 @@ def resend_verification():
             'message': 'Failed to send email. Please try again later.'
         }), 500
 
-@app.route('/admin/support-settings', methods=['GET', 'POST'])
-@admin_required
-def admin_support_settings():
-    if request.method == 'POST':
-        phone = request.form.get('support_phone', '').strip()
-        text = request.form.get('support_button_text', '').strip()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('support_phone', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (phone,))
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('support_button_text', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (text,))
-        conn.commit()
-        conn.close()
-        flash('Support settings updated successfully.', 'success')
-        return redirect(url_for('admin_support_settings'))
-    return render_template('admin/support-settings.html')
+
 
 
 
@@ -5443,102 +5613,6 @@ def help_center():
     return render_template('help.html')
 
 
-@app.route('/admin/settings', methods=['GET', 'POST'])
-@admin_required
-def admin_settings():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    if request.method == 'POST':
-        # Existing platform settings
-        commission = request.form.get('commission_rate')
-        min_withdrawal = request.form.get('min_withdrawal')
-        # New customer support settings
-        support_phone = request.form.get('support_phone', '').strip()
-        support_button_text = request.form.get('support_button_text', '').strip()
-
-        # Use INSERT ... ON CONFLICT to update or insert
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('commission_rate', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (commission,))
-
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('min_withdrawal', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (min_withdrawal,))
-
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('support_phone', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (support_phone,))
-
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('support_button_text', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-        """, (support_button_text,))
-
-        conn.commit()
-
-        # Log the action
-        cursor.execute("""
-            INSERT INTO admin_logs (admin_id, action, details)
-            VALUES (%s, %s, %s)
-        """, (session['user_id'], 'update_settings', 'Updated platform and support settings'))
-
-        conn.commit()
-        conn.close()
-
-        flash('Settings updated successfully.', 'success')
-        return redirect(url_for('admin_settings'))
-
-    # GET: fetch all settings
-    cursor.execute("SELECT key, value FROM settings")
-    settings = {row['key']: row['value'] for row in cursor.fetchall()}
-    conn.close()
-
-    return render_template('admin/settings.html', settings=settings)
-
-@app.route('/admin/emails/failed')
-@admin_required
-def admin_failed_emails():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM email_logs
-        WHERE status = 'failed'
-        ORDER BY created_at DESC
-    """)
-    emails = cursor.fetchall()
-    conn.close()
-    return render_template('admin/failed-emails.html', emails=emails)
-
-@app.route('/admin/emails/<int:email_id>/resend', methods=['POST'])
-@admin_required
-def admin_resend_email(email_id):
-    # We'll need to store the email content or regenerate it based on type.
-    # For simplicity, we'll just mark as sent and retry.
-    # In a real implementation, we would resend the actual email.
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM email_logs WHERE id = %s", (email_id,))
-    email_log = cursor.fetchone()
-    if not email_log:
-        conn.close()
-        flash('Email log not found.', 'error')
-        return redirect(url_for('admin_failed_emails'))
-
-    # Attempt to resend: we need to know the original recipient and type.
-    # We'll implement a generic resend based on type and related data.
-    # For now, we'll just update status to 'resent'.
-    cursor.execute("UPDATE email_logs SET status = 'resent' WHERE id = %s", (email_id,))
-    conn.commit()
-    cursor.execute("INSERT INTO admin_logs (admin_id, action, details) VALUES (%s, %s, %s)",
-                   (session['user_id'], 'resend_email', f'Resent email ID {email_id}'))
-    conn.commit()
-    conn.close()
-    flash('Email resent (simulated).', 'success')
-    return redirect(url_for('admin_failed_emails'))
 
 
 def log_email(recipient, subject, email_type, status='sent', error=None):
@@ -6429,7 +6503,18 @@ def vendor_step2():
 
     return render_template('onboarding/vendor/vendor-step2.html')
 
-
+def log_admin_action(admin_id, action, details, target_id=None, target_type=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    full_details = details
+    if target_type and target_id:
+        full_details = f"{details} (Target: {target_type} #{target_id})"
+    cursor.execute("""
+        INSERT INTO admin_logs (admin_id, action, details, ip_address)
+        VALUES (%s, %s, %s, %s)
+    """, (admin_id, action, full_details, request.remote_addr))
+    conn.commit()
+    conn.close()
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
@@ -6485,110 +6570,88 @@ def admin_login():
 @app.route('/admin/setup', methods=['GET', 'POST'])
 def admin_setup():
     """Create the first admin account (only if no admin exists)"""
-    # Check if any admin already exists
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE user_type = 'admin'")
-    admin_count = cursor.fetchone()['count']
+
+    # Check if any admin already exists – use alias for dict access
+    cursor.execute("SELECT COUNT(*) AS count FROM users WHERE user_type = 'admin'")
+    row = cursor.fetchone()
+    admin_count = row['count'] if row else 0
     conn.close()
+
     if admin_count > 0:
-        flash('Admin accounts already exist. Please log in.', 'warning')
+        flash('Admin account already exists. Please log in.', 'warning')
         return redirect(url_for('admin_login'))
 
     if request.method == 'POST':
-        email = request.form.get('email', '').strip().lower()
         full_name = request.form.get('full_name', '').strip()
-        password = request.form.get('password', '')
-        confirm_password = request.form.get('confirm_password', '')
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
 
         # Validation
-        if not email or not full_name or not password:
-            flash('All fields are required.', 'error')
-            return redirect(url_for('admin_setup'))
+        if not full_name or len(full_name) < 2:
+            flash('Full name is required and must be at least 2 characters.', 'error')
+            return render_template('admin/setup.html')
 
-        if not is_valid_email(email):
+        if not email or '@' not in email:
             flash('Please enter a valid email address.', 'error')
-            return redirect(url_for('admin_setup'))
+            return render_template('admin/setup.html')
 
-        if len(password) < 6:
-            flash('Password must be at least 6 characters.', 'error')
-            return redirect(url_for('admin_setup'))
+        if not password or len(password) < 8:
+            flash('Password must be at least 8 characters.', 'error')
+            return render_template('admin/setup.html')
 
         if password != confirm_password:
             flash('Passwords do not match.', 'error')
-            return redirect(url_for('admin_setup'))
+            return render_template('admin/setup.html')
 
+        # Check if email already used (global uniqueness)
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
         if cursor.fetchone():
             conn.close()
-            flash('Email already registered.', 'error')
-            return redirect(url_for('admin_setup'))
+            flash('This email is already registered. Please use a different one.', 'error')
+            return render_template('admin/setup.html')
 
-        # Create admin user
+        # Hash password
+        from werkzeug.security import generate_password_hash
         password_hash = generate_password_hash(password)
+
+        # Insert new admin user
         cursor.execute("""
-            INSERT INTO users (email, password_hash, full_name, user_type, is_verified, is_active)
-            VALUES (%s, %s, %s, 'admin', 1, 1)
+            INSERT INTO users (
+                email, password_hash, full_name, user_type,
+                is_verified, is_active, created_at, updated_at
+            ) VALUES (%s, %s, %s, 'admin', 1, 1, NOW(), NOW())
+            RETURNING id
         """, (email, password_hash, full_name))
+        # Fetch the returned id – using dict access
+        user_id = cursor.fetchone()['id']
+
+        # Create wallet for admin (optional)
+        cursor.execute("""
+            INSERT INTO wallet (user_id, balance, pending_balance, total_earned, total_withdrawn)
+            VALUES (%s, 0, 0, 0, 0)
+        """, (user_id,))
+
         conn.commit()
         conn.close()
 
-        flash('✅ Admin account created successfully! Please log in.', 'success')
+        flash('Admin account created successfully! Please log in.', 'success')
         return redirect(url_for('admin_login'))
 
+    # GET request – show the setup form
     return render_template('admin/setup.html')
 
 
-
-@app.route('/admin/users/create', methods=['GET', 'POST'])
-@admin_required
-def admin_create_user():
-    if request.method == 'POST':
-        email = request.form.get('email', '').strip().lower()
-        full_name = request.form.get('full_name', '').strip()
-        password = request.form.get('password', '')
-        confirm_password = request.form.get('confirm_password', '')
-
-        # Validation
-        if not email or not full_name or not password:
-            flash('All fields are required.', 'error')
-            return redirect(url_for('admin_create_user'))
-
-        if not is_valid_email(email):
-            flash('Please enter a valid email address.', 'error')
-            return redirect(url_for('admin_create_user'))
-
-        if len(password) < 6:
-            flash('Password must be at least 6 characters.', 'error')
-            return redirect(url_for('admin_create_user'))
-
-        if password != confirm_password:
-            flash('Passwords do not match.', 'error')
-            return redirect(url_for('admin_create_user'))
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-        if cursor.fetchone():
-            conn.close()
-            flash('Email already registered.', 'error')
-            return redirect(url_for('admin_create_user'))
-
-        # Create admin user
-        password_hash = generate_password_hash(password)
-        cursor.execute("""
-            INSERT INTO users (email, password_hash, full_name, user_type, is_verified, is_active)
-            VALUES (%s, %s, %s, 'admin', 1, 1)
-        """, (email, password_hash, full_name))
-        conn.commit()
-        conn.close()
-
-        flash(f'Admin user {full_name} created successfully!', 'success')
-        return redirect(url_for('admin_users'))
-
-    return render_template('admin/create-admin.html')
+@app.route('/admin/logout')
+def admin_logout():
+    """Log out the admin user"""
+    session.clear()           # Remove all session data
+    flash('You have been logged out.', 'success')
+    return redirect(url_for('admin_login'))
 
 
 @app.route('/vendor-step3', methods=['GET', 'POST'])
@@ -7198,7 +7261,7 @@ def api_initiate_checkout():
         }), 400
 
     # Generate transaction reference
-    reference = f"Bizspark-{secrets.token_hex(12).upper()}"
+    reference = f"Michie_Bizspark-{secrets.token_hex(12).upper()}"
 
     # Create pending purchase record
     cursor.execute("""
@@ -7334,7 +7397,7 @@ def api_initiate_cart_checkout():
         total_amount = subtotal + float(shipping_cost)
 
         # Generate transaction reference
-        reference = f"Bizspark-{secrets.token_hex(12).upper()}"
+        reference = f"Michie_Bizspark-{secrets.token_hex(12).upper()}"
 
         # -------- FIX: Use user_id as vendor_id (satisfies foreign key) --------
         cursor.execute("""
@@ -7762,6 +7825,77 @@ def purchase_detail(purchase_id):
     )
 
 
+@app.route('/product-info/<int:product_id>')
+@login_required
+def product_info(product_id):
+    """Post-purchase 'View' page for a product bought on its own.
+    Ownership-checked: only shows if this customer actually purchased it.
+
+    A product "bought alone" can be stored two ways in `purchases`:
+      1. item_type='product' directly (the "Buy Now" flow), or
+      2. item_type='cart' with exactly one item in its metadata (a
+         single-item cart checkout) — my_purchases() displays these as
+         a product too, so ownership here must recognize the same case,
+         otherwise the View button silently bounces the owner back."""
+    user_id = session.get('user_id')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 1) Direct product purchase
+    cursor.execute("""
+        SELECT * FROM purchases
+        WHERE user_id = %s AND item_type = 'product' AND item_id = %s AND payment_status = 'completed'
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, (user_id, product_id))
+    purchase = cursor.fetchone()
+
+    # 2) Fall back to a single-item cart purchase for this product
+    if not purchase:
+        cursor.execute("""
+            SELECT * FROM purchases
+            WHERE user_id = %s AND item_type = 'cart' AND payment_status = 'completed'
+            ORDER BY created_at DESC
+        """, (user_id,))
+        for cart_purchase in cursor.fetchall():
+            if not cart_purchase['metadata']:
+                continue
+            try:
+                metadata = json.loads(cart_purchase['metadata'])
+            except (TypeError, ValueError):
+                continue
+            if len(metadata) == 1 and metadata[0].get('item_type') == 'product' \
+                    and int(metadata[0].get('item_id', 0)) == product_id:
+                purchase = cart_purchase
+                break
+
+    if not purchase:
+        conn.close()
+        flash("You haven't purchased this product.", 'error')
+        return redirect(url_for('my_purchases'))
+
+    cursor.execute("""
+        SELECT p.id, p.title, p.description, p.price, p.cover_image,
+               p.is_digital, p.category,
+               v.business_name as vendor_name
+        FROM products p
+        JOIN vendor_profiles v ON p.vendor_id = v.user_id
+        WHERE p.id = %s
+    """, (product_id,))
+    item = cursor.fetchone()
+    conn.close()
+
+    if not item:
+        flash('Product not found.', 'error')
+        return redirect(url_for('my_purchases'))
+
+    return render_template(
+        'dashboard/customer/product-info.html',
+        purchase=purchase,
+        item=dict(item)
+    )
+
+
 @app.route('/my-purchases')
 @login_required
 def my_purchases():
@@ -7780,6 +7914,7 @@ def my_purchases():
             pur.created_at,
             pur.metadata,
             p.cover_image,
+            p.is_digital,
             v.business_name as vendor_name
         FROM purchases pur
         LEFT JOIN products p ON pur.item_type = 'product' AND pur.item_id = p.id
@@ -7919,7 +8054,7 @@ def download_product(product_id):
         return redirect(url_for('marketplace'))
 
     import mimetypes
-    filename = purchase['title'] + os.path.splitext(purchase['file_url'])[1]
+    filename = secure_filename(purchase['title']) + os.path.splitext(purchase['file_url'])[1]
     return send_file(
         file_path,
         as_attachment=True,
@@ -8130,7 +8265,7 @@ def api_enroll_course_paystack():
 
 def send_purchase_confirmation(email, full_name, item_title, item_type, item_id):
     """Send purchase confirmation email with download link"""
-    subject = f"Your Bizspark Purchase: {item_title}"
+    subject = f"Your Michie Bizspark Purchase: {item_title}"
 
     download_link = f"{BASE_URL}/download/product/{item_id}" if item_type == 'product' else f"{BASE_URL}/learning"
 
@@ -8165,7 +8300,7 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>Thank you for purchasing <strong>{item_title}</strong> from Bizspark!</p>
+                <p>Thank you for purchasing <strong>{item_title}</strong> from Michie Bizspark!</p>
 
                 <div style="text-align: center;">
                     <a href="{download_link}" class="btn">
@@ -8178,7 +8313,7 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
                 </p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -8190,13 +8325,13 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
 
     Hi {full_name},
 
-    Thank you for purchasing {item_title} from Bizspark!
+    Thank you for purchasing {item_title} from Michie Bizspark!
 
     Download link: {download_link}
 
     You can also access this item anytime from your dashboard.
 
-    © 2026 Bizspark
+    © 2026 Michie Bizspark
     """
 
     # If email not configured, print to console
@@ -8308,7 +8443,7 @@ def vendor_create_course():
                     os.makedirs(upload_dir)
                 cover_path = os.path.join(upload_dir, unique_cover)
                 cover_image.save(cover_path)
-                cover_filename = f"../uploads/{user_id}/{unique_cover}"
+                cover_filename = f"/static/uploads/{user_id}/{unique_cover}"
 
         # Handle promo video
         promo_video_file = request.files.get('promo_video_file')
@@ -8324,7 +8459,7 @@ def vendor_create_course():
                     os.makedirs(upload_dir)
                 video_path = os.path.join(upload_dir, unique_video)
                 promo_video_file.save(video_path)
-                promo_video_filename = f"../uploads/{user_id}/videos/{unique_video}"
+                promo_video_filename = f"/static/uploads/{user_id}/videos/{unique_video}"
                 print(f"✅ Promo video saved to: {promo_video_filename}")
         elif promo_video_url:
             promo_video_filename = promo_video_url
@@ -8332,11 +8467,9 @@ def vendor_create_course():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-
         is_digital = 1
 
-
-        # ✅ INSERT with is_digital column
+        # INSERT with is_digital column
         cursor.execute('''
             INSERT INTO courses (
                 vendor_id, title, description, category, level,
@@ -8356,14 +8489,27 @@ def vendor_create_course():
             promo_video_filename,
             what_you_will_learn,
             requirements,
-            is_digital  # ✅ This is now saved
+            is_digital
         ))
 
         course_id = cursor.fetchone()['id']
         conn.commit()
         conn.close()
 
-        flash('✅ Course created successfully! Now add some lessons.', 'success')
+        # ===== Set initial moderation status to Pending Review =====
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE courses
+            SET status = 'pending_review',
+                is_approved = 0,
+                is_active = 0
+            WHERE id = %s
+        """, (course_id,))
+        conn.commit()
+        conn.close()
+
+        flash('✅ Course created successfully! It is now pending review.', 'success')
         return redirect(url_for('vendor_course_lessons', course_id=course_id))
 
     return render_template('dashboard/vendor/create-course.html')
@@ -8430,7 +8576,7 @@ def vendor_edit_course(course_id):
 
                 cover_path = os.path.join(upload_dir, unique_cover)
                 cover_image.save(cover_path)
-                cover_filename = f"../uploads/{user_id}/{unique_cover}"
+                cover_filename = f"/static/uploads/{user_id}/{unique_cover}"
 
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -8575,10 +8721,20 @@ def vendor_create_lesson():
 
     title = request.form.get('title', '').strip()
     description = request.form.get('description', '').strip()
-    duration = request.form.get('duration', 0)
-    order_index = request.form.get('order_index', 0)
+
+    # --- FIX: Safely convert to int, default 0 ---
+    def to_int(value, default=0):
+        if value is None or str(value).strip() == '':
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
+    duration = to_int(request.form.get('duration'))
+    order_index = to_int(request.form.get('order_index'))
+
     video_url = request.form.get('video_url', '').strip()
-    # Convert checkbox to integer (1 = free, 0 = paid)
     is_free = 1 if request.form.get('is_free') == 'on' else 0
 
     # ===== VALIDATION =====
@@ -8588,7 +8744,6 @@ def vendor_create_lesson():
     if not description or len(description) < 10:
         return jsonify({'success': False, 'message': 'Lesson description must be at least 10 characters.'}), 400
 
-    # 🔴 PROBLEM: Video file handling
     video_file = request.files.get('video_file')
     has_video_file = video_file and video_file.filename != ''
     has_video_url = bool(video_url.strip())
@@ -8600,21 +8755,19 @@ def vendor_create_lesson():
     # ===== HANDLE VIDEO FILE UPLOAD =====
     video_file_url = None
     if has_video_file:
-        # 🔴 FIX: Check if file is actually a video
         if not allowed_file(video_file.filename):
             return jsonify({
                 'success': False,
                 'message': 'Video file type not allowed. Please upload MP4, MOV, AVI, or WEBM.'
             }), 400
 
-        # 🔴 FIX: Check file size properly
-        video_file.seek(0, 2)  # Go to end of file
-        file_size = video_file.tell()  # Get size
-        video_file.seek(0)  # Reset to beginning
+        video_file.seek(0, 2)
+        file_size = video_file.tell()
+        video_file.seek(0)
 
         print(f"📊 File size: {file_size} bytes ({file_size / (1024 * 1024):.2f} MB)")
 
-        if file_size > 500 * 1024 * 1024:  # 500MB
+        if file_size > 500 * 1024 * 1024:
             return jsonify({
                 'success': False,
                 'message': 'Video file too large. Maximum size is 500MB.'
@@ -8623,7 +8776,6 @@ def vendor_create_lesson():
         filename = secure_filename(video_file.filename)
         unique_filename = f"{secrets.token_hex(8)}_{filename}"
 
-        # 🔴 FIX: Ensure video directory exists
         upload_dir = os.path.join(app.root_path, 'static', 'uploads', str(user_id), 'videos')
         os.makedirs(upload_dir, exist_ok=True)
 
@@ -8632,11 +8784,8 @@ def vendor_create_lesson():
         try:
             video_file.save(file_path)
             print(f"✅ Video saved to: {file_path}")
-
-            # 🔴 FIX: Use relative path from static folder
-            video_file_url = f"../uploads/{user_id}/videos/{unique_filename}"
+            video_file_url = f"/static/uploads/{user_id}/videos/{unique_filename}"
             print(f"📁 Video URL stored in DB: {video_file_url}")
-
         except Exception as e:
             print(f"❌ Error saving video: {e}")
             return jsonify({
@@ -8654,14 +8803,13 @@ def vendor_create_lesson():
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         ''', (course_id, title, description, duration, order_index,
-              video_url if not has_video_file else None,  # Don't save URL if file uploaded
-              video_file_url,  # Save file path
+              video_url if not has_video_file else None,
+              video_file_url,
               is_free))
 
         lesson_id = cursor.fetchone()['id']
         print(f"✅ Lesson {lesson_id} created with video_file: {video_file_url}")
 
-        # Update course totals
         cursor.execute('''
             UPDATE courses 
             SET total_lessons = (SELECT COUNT(*) FROM lessons WHERE course_id = %s),
@@ -9022,7 +9170,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     <body>
         <div class="container">
             <div class="header">
-                <h1>🔔 Bizspark Notification</h1>
+                <h1>🔔 Michie Bizspark Notification</h1>
             </div>
             <div class="content">
                 <h2>Hi {vendor_name},</h2>
@@ -9030,7 +9178,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
                 <p style="color: #666; font-size: 14px;">If you have any questions, please contact our support team.</p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -9038,13 +9186,13 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     """
 
     text_content = f"""
-    Bizspark Notification
+    Michie Bizspark Notification
 
     Hi {vendor_name},
 
     {message}
 
-    © 2026 Bizspark
+    © 2026 Michie Bizspark
     """
 
     try:
@@ -9077,7 +9225,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
     if not verification_code:
         verification_code = generate_verification_code()
 
-    subject = "Verify Your Bizspark Account"
+    subject = "Verify Your Michie Bizspark Account"
 
     # HTML email content with both link and code
     html_content = f"""
@@ -9123,11 +9271,11 @@ def send_verification_email(email, full_name, verification_token, verification_c
     <body>
         <div class="container">
             <div class="header">
-                <h1>🎉 Welcome to Bizspark!</h1>
+                <h1>🎉 Welcome to Michie Bizspark!</h1>
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>Thank you for creating an account with Bizspark! Please verify your email address.</p>
+                <p>Thank you for creating an account with Michie Bizspark! Please verify your email address.</p>
 
                 <div style="text-align: center;">
                     <a href="{verification_url}" class="btn">Verify Email Address</a>
@@ -9152,7 +9300,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
                 </p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -9161,7 +9309,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
 
     # Plain text fallback
     text_content = f"""
-    Welcome to Bizspark, {full_name}!
+    Welcome to Michie Bizspark, {full_name}!
 
     Verify your email using one of these methods:
 
@@ -9172,7 +9320,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
 
     If you didn't create an account, you can safely ignore this email.
 
-    © 2026 Bizspark
+    © 2026 Michie Bizspark
     """
 
     # If email not configured, print to console
@@ -10084,7 +10232,7 @@ def inbox():
     conversations = [
         {'avatar': 'C', 'name': 'Cadmus Tech', 'preview': 'Thanks for purchasing our course!', 'time': '2m', 'active': True},
         {'avatar': 'S', 'name': 'Sarah Johnson', 'preview': "Let's collaborate on a project.", 'time': '15m', 'active': False},
-        {'avatar': 'B', 'name': 'Bizspark Support', 'preview': 'Your request has been received.', 'time': '1h', 'active': False},
+        {'avatar': 'B', 'name': 'Michie Bizspark Support', 'preview': 'Your request has been received.', 'time': '1h', 'active': False},
         {'avatar': 'D', 'name': 'David Smith', 'preview': 'Can you review my portfolio?', 'time': 'Yesterday', 'active': False}
     ]
 
@@ -10111,13 +10259,11 @@ def inbox():
 @app.route('/marketplace')
 @login_required
 def marketplace():
-    """Marketplace page - shows all products and courses from all vendors"""
-    user_id = session.get('user_id')
-
+    """Marketplace page - shows all approved products and courses"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # ===== GET ALL ACTIVE PRODUCTS =====
+    # ===== GET ALL APPROVED PRODUCTS =====
     cursor.execute("""
         SELECT 
             p.id,
@@ -10132,12 +10278,12 @@ def marketplace():
             v.user_id as vendor_id
         FROM products p
         JOIN vendor_profiles v ON p.vendor_id = v.user_id
-        WHERE p.is_active = 1 AND p.is_approved = 1
+        WHERE p.status = 'approved'
         ORDER BY p.created_at DESC
     """)
     products = cursor.fetchall()
 
-    # ===== GET ALL ACTIVE COURSES =====
+    # ===== GET ALL APPROVED COURSES =====
     cursor.execute("""
         SELECT 
             c.id,
@@ -10154,7 +10300,7 @@ def marketplace():
             v.user_id as vendor_id
         FROM courses c
         JOIN vendor_profiles v ON c.vendor_id = v.user_id
-        WHERE c.is_active = 1 AND c.is_approved = 1
+        WHERE c.status = 'approved'
         ORDER BY c.created_at DESC
     """)
     courses = cursor.fetchall()
@@ -10249,12 +10395,73 @@ def products():
         SELECT p.id, p.title, p.price, p.cover_image, p.category, v.business_name as vendor_name
         FROM products p
         JOIN vendor_profiles v ON p.vendor_id = v.user_id
-        WHERE p.is_active = 1 AND p.is_approved = 1
+        WHERE p.status = 'approved'
         ORDER BY p.created_at DESC
     """)
     products = cursor.fetchall()
     conn.close()
     return render_template('dashboard/customer/products.html', products=products)
+
+
+
+@app.route('/product/<int:product_id>')
+def product_detail(product_id):
+    """Display a single product's details (public view)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.*, u.full_name as vendor_name, vp.business_name
+        FROM products p
+        LEFT JOIN users u ON p.vendor_id = u.id
+        LEFT JOIN vendor_profiles vp ON u.id = vp.user_id
+        WHERE p.id = %s AND p.is_active = 1 AND p.is_approved = 1 AND p.status = 'approved'
+    """, (product_id,))
+    product = cursor.fetchone()
+
+    if not product:
+        conn.close()
+        flash('Product not found or not available.', 'error')
+        return redirect(url_for('index'))
+
+    product = dict(product)
+
+    # Fetch reviews for this product
+    cursor.execute("""
+        SELECT r.*, u.full_name as customer_name
+        FROM reviews r
+        JOIN users u ON r.customer_id = u.id
+        WHERE r.product_id = %s
+        ORDER BY r.created_at DESC
+    """, (product_id,))
+    reviews = cursor.fetchall()
+
+    # Fetch existing chat history between the logged-in customer and this vendor
+    chat_messages = []
+    user_id = session.get('user_id')
+    if user_id:
+        cursor.execute("""
+            SELECT id FROM conversations
+            WHERE vendor_id = %s AND customer_id = %s
+        """, (product['vendor_id'], user_id))
+        conv = cursor.fetchone()
+        if conv:
+            cursor.execute("""
+                SELECT * FROM messages
+                WHERE conversation_id = %s
+                ORDER BY created_at ASC
+            """, (conv['id'],))
+            chat_messages = cursor.fetchall()
+
+    conn.close()
+
+    return render_template(
+        'dashboard/customer/product-detail.html',
+        product=product,
+        reviews=reviews,
+        chat_messages=chat_messages,
+        user={'id': user_id}
+    )
+
 
 
 
@@ -10313,8 +10520,19 @@ def download_all_lessons(course_id):
 @app.route('/courses')
 @login_required
 def courses():
-    """Courses page"""
-    return render_template('dashboard/customer/courses.html', title='Courses')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT c.id, c.title, c.price, c.cover_image, c.category, c.level,
+               v.business_name as vendor_name
+        FROM courses c
+        JOIN vendor_profiles v ON c.vendor_id = v.user_id
+        WHERE c.status = 'approved'
+        ORDER BY c.created_at DESC
+    """)
+    courses = cursor.fetchall()
+    conn.close()
+    return render_template('dashboard/customer/courses.html', courses=courses)
 
 @app.route('/vendors')
 @login_required
@@ -10329,84 +10547,6 @@ def vendors():
 
 # ============================================
 # PRODUCT DETAIL ROUTE
-# ============================================
-
-@app.route('/product/<int:product_id>')
-@login_required
-def product_detail(product_id):
-    user_id = session.get('user_id')
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # First, check if the user has purchased this product.
-    # Products bought individually get a row in `purchases` with
-    # item_type='product'. Products bought through the CART checkout flow
-    # only get a row in `orders` (the parent `purchases` row is item_type
-    # ='cart'), so both sources must be checked or cart purchases never show
-    # as owned on this page.
-    cursor.execute("""
-        SELECT id FROM purchases
-        WHERE item_type = 'product' AND item_id = %s AND user_id = %s AND payment_status = 'completed'
-        UNION
-        SELECT id FROM orders
-        WHERE product_id = %s AND customer_id = %s AND status = 'completed' AND payment_status = 'paid'
-    """, (product_id, user_id, product_id, user_id))
-    has_purchased = cursor.fetchone() is not None
-
-    # If not purchased, require product to be active and approved
-    if not has_purchased:
-        cursor.execute("""
-            SELECT 
-                p.id, p.title, p.description, p.category, p.product_type,
-                p.price, p.cover_image, p.preview_images, p.tags,
-                p.rating, p.reviews_count, p.is_digital, p.stock_quantity,
-                p.shipping_cost, p.estimated_delivery,
-                v.user_id as vendor_id, v.business_name as vendor_name,
-                v.business_description as vendor_description,
-                v.logo_url as vendor_logo, v.rating as vendor_rating
-            FROM products p
-            JOIN vendor_profiles v ON p.vendor_id = v.user_id
-            WHERE p.id = %s AND p.is_active = 1 AND p.is_approved = 1
-        """, (product_id,))
-        product = cursor.fetchone()
-        if not product:
-            conn.close()
-            flash('Product not found or unavailable.', 'error')
-            return redirect(url_for('marketplace'))
-    else:
-        # User purchased it, show regardless of active status
-        cursor.execute("""
-            SELECT 
-                p.id, p.title, p.description, p.category, p.product_type,
-                p.price, p.cover_image, p.preview_images, p.tags,
-                p.rating, p.reviews_count, p.is_digital, p.stock_quantity,
-                p.shipping_cost, p.estimated_delivery,
-                v.user_id as vendor_id, v.business_name as vendor_name,
-                v.business_description as vendor_description,
-                v.logo_url as vendor_logo, v.rating as vendor_rating
-            FROM products p
-            JOIN vendor_profiles v ON p.vendor_id = v.user_id
-            WHERE p.id = %s
-        """, (product_id,))
-        product = cursor.fetchone()
-        if not product:
-            conn.close()
-            flash('Product not found.', 'error')
-            return redirect(url_for('marketplace'))
-
-    product = dict(product)
-    product['already_purchased'] = has_purchased
-
-    # Fetch reviews, related products, etc. (keep your existing logic)
-    # ...
-
-    conn.close()
-    return render_template('dashboard/customer/product-detail.html', product=product)
-
-
-# ============================================
-# COURSE DETAIL ROUTE
 # ============================================
 
 @app.route('/course/<int:course_id>')
@@ -10424,7 +10564,7 @@ def course_detail(course_id):
     """, (course_id, user_id))
     is_enrolled = cursor.fetchone() is not None
 
-    # If not enrolled, require course to be active and approved
+    # If not enrolled, require course to be approved
     if not is_enrolled:
         cursor.execute("""
             SELECT 
@@ -10437,7 +10577,7 @@ def course_detail(course_id):
                 v.logo_url as vendor_logo, v.rating as vendor_rating
             FROM courses c
             JOIN vendor_profiles v ON c.vendor_id = v.user_id
-            WHERE c.id = %s AND c.is_active = 1 AND c.is_approved = 1
+            WHERE c.id = %s AND c.status = 'approved'
         """, (course_id,))
         course = cursor.fetchone()
         if not course:
@@ -10445,7 +10585,7 @@ def course_detail(course_id):
             flash('Course not found or unavailable.', 'error')
             return redirect(url_for('marketplace'))
     else:
-        # User is enrolled, show regardless of active status
+        # User is enrolled, show regardless of status
         cursor.execute("""
             SELECT 
                 c.id, c.title, c.description, c.category, c.level,
@@ -10468,11 +10608,57 @@ def course_detail(course_id):
     course = dict(course)
     course['is_enrolled'] = is_enrolled
 
-    # Fetch lessons, reviews, etc. (keep your existing logic)
-    # ...
+    # Fetch lessons
+    cursor.execute("""
+        SELECT id, title, description, duration, video_url, video_file, is_free, order_index
+        FROM lessons
+        WHERE course_id = %s
+        ORDER BY order_index ASC
+    """, (course_id,))
+    lessons = cursor.fetchall()
+
+    # Fetch reviews
+    cursor.execute("""
+        SELECT r.*, u.full_name as customer_name
+        FROM reviews r
+        JOIN users u ON r.customer_id = u.id
+        WHERE r.course_id = %s
+        ORDER BY r.created_at DESC
+    """, (course_id,))
+    reviews = cursor.fetchall()
 
     conn.close()
-    return render_template('dashboard/customer/course-detail.html', course=course)
+
+    return render_template(
+        'dashboard/customer/course-detail.html',
+        course=course,
+        lessons=lessons,
+        reviews=reviews,
+        is_enrolled=is_enrolled
+    )
+
+@app.context_processor
+def inject_admin_stats():
+    if session.get('user_type') == 'admin':
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM products WHERE status = 'pending_review'")
+        pending_products = cursor.fetchone()['count']
+        cursor.execute("SELECT COUNT(*) as count FROM courses WHERE status = 'pending_review'")
+        pending_courses = cursor.fetchone()['count']
+        cursor.execute("SELECT COUNT(*) as count FROM vendor_profiles WHERE verification_status = 'pending'")
+        pending_vendors = cursor.fetchone()['count']
+        conn.close()
+        return {
+            'pending_products_count': pending_products,
+            'pending_courses_count': pending_courses,
+            'pending_vendors_count': pending_vendors
+        }
+    return {}
+# ============================================
+# COURSE DETAIL ROUTE
+# ============================================
+
 
 
 @app.route('/debug/course/<int:course_id>')
@@ -10612,7 +10798,7 @@ def send_password_reset_email(email, full_name, reset_token):
     """Send password reset email with secure link"""
     reset_url = f"{BASE_URL}/reset-password/{reset_token}"
 
-    subject = "Reset Your Bizspark Password"
+    subject = "Reset Your Michie Bizspark Password"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -10656,7 +10842,7 @@ def send_password_reset_email(email, full_name, reset_token):
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>We received a request to reset your Bizspark password. Click the button below to create a new password:</p>
+                <p>We received a request to reset your Michie Bizspark password. Click the button below to create a new password:</p>
 
                 <div style="text-align: center;">
                     <a href="{reset_url}" class="btn">Reset Password</a>
@@ -10671,7 +10857,7 @@ def send_password_reset_email(email, full_name, reset_token):
                 </div>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -10683,7 +10869,7 @@ def send_password_reset_email(email, full_name, reset_token):
 
     Hi {full_name},
 
-    We received a request to reset your Bizspark password.
+    We received a request to reset your Michie Bizspark password.
 
     Click the link below to create a new password:
     {reset_url}
@@ -10692,7 +10878,7 @@ def send_password_reset_email(email, full_name, reset_token):
 
     If you didn't request a password reset, you can safely ignore this email.
 
-    © 2026 Bizspark
+    © 2026 Michie Bizspark
     """
 
     # If email not configured, print to console
@@ -10736,7 +10922,7 @@ def verify_otp_page():
 
 def send_otp_email(email, full_name, otp):
     """Send OTP email"""
-    subject = "Password Reset OTP - Bizspark"
+    subject = "Password Reset OTP - Michie Bizspark"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -10782,7 +10968,7 @@ def send_otp_email(email, full_name, otp):
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>You requested to reset your Bizspark password. Use the OTP code below:</p>
+                <p>You requested to reset your Michie Bizspark password. Use the OTP code below:</p>
 
                 <div class="code-box">
                     <div class="code">{otp}</div>
@@ -10795,7 +10981,7 @@ def send_otp_email(email, full_name, otp):
                 </div>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -10813,7 +10999,7 @@ def send_otp_email(email, full_name, otp):
 
     If you didn't request this, you can safely ignore this email.
 
-    © 2026 Bizspark
+    © 2026 Michie Bizspark
     """
 
     if not EMAIL_USER or not EMAIL_PASSWORD:

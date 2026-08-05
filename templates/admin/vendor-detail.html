@@ -1,0 +1,116 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<div class="admin-header">
+    <h1>
+        <i data-lucide="users" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Vendor Detail</span>
+    </h1>
+    <a href="{{ url_for('admin_pending_vendors') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Pending Vendors
+    </a>
+</div>
+
+<div style="background:white;border-radius:16px;padding:32px;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,0.04);">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;">
+        <div>
+            <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+                {% if vendor.logo_url %}
+                    <img src="{{ vendor.logo_url }}" alt="Logo" style="width:80px;height:80px;border-radius:50%;object-fit:cover;">
+                {% else %}
+                    <div style="width:80px;height:80px;border-radius:50%;background:#e0e4ff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;color:#0000c1;">
+                        {{ vendor.business_name[0] }}
+                    </div>
+                {% endif %}
+                <div>
+                    <h2 style="font-size:24px;font-weight:700;">{{ vendor.business_name }}</h2>
+                    <p style="color:#6b7280;">{{ vendor.tagline or '' }}</p>
+                </div>
+            </div>
+            <p style="line-height:1.7;color:#4b5563;margin-bottom:16px;">{{ vendor.business_description or 'No description provided.' }}</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div><strong>Category:</strong> {{ vendor.business_category or 'N/A' }}</div>
+                <div><strong>Business Email:</strong> {{ vendor.business_email or vendor.email }}</div>
+                <div><strong>Phone:</strong> {{ vendor.business_phone or 'N/A' }}</div>
+                <div><strong>Website:</strong> {% if vendor.website %}<a href="{{ vendor.website }}" target="_blank">{{ vendor.website }}</a>{% else %}N/A{% endif %}</div>
+                <div><strong>Country:</strong> {{ vendor.country or 'N/A' }}</div>
+                <div><strong>State:</strong> {{ vendor.state or 'N/A' }}</div>
+                <div><strong>City:</strong> {{ vendor.city or 'N/A' }}</div>
+                <div><strong>Joined:</strong> {{ vendor.user_since.strftime('%Y-%m-%d') }}</div>
+            </div>
+            {% if vendor.cac_number %}
+            <div style="margin-top:16px;"><strong>CAC Number:</strong> {{ vendor.cac_number }}</div>
+            {% endif %}
+            {% if vendor.tin %}
+            <div><strong>TIN:</strong> {{ vendor.tin }}</div>
+            {% endif %}
+        </div>
+        <div>
+            <h3 style="font-size:18px;font-weight:700;margin-bottom:12px;">Verification</h3>
+            <div style="background:#f8fafc;border-radius:12px;padding:20px;border:1px solid #e5e7eb;">
+                <div style="display:flex;justify-content:space-between;padding:8px 0;">
+                    <span>Status</span>
+                    <span><span class="badge bg-warning">{{ vendor.verification_status }}</span></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:8px 0;">
+                    <span>Bank Name</span>
+                    <span>{{ vendor.bank_name or 'Not set' }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:8px 0;">
+                    <span>Account Number</span>
+                    <span>{{ vendor.bank_account_number or 'Not set' }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:8px 0;">
+                    <span>Account Name</span>
+                    <span>{{ vendor.bank_account_name or 'Not set' }}</span>
+                </div>
+                {% if vendor.verification_rejection_reason %}
+                <div style="margin-top:12px;padding:12px;background:#fee2e2;border-radius:8px;color:#991b1b;">
+                    <strong>Rejection Reason:</strong> {{ vendor.verification_rejection_reason }}
+                </div>
+                {% endif %}
+            </div>
+            <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">
+                <button class="btn-success" onclick="verify({{ vendor.user_id }}, 'verify')">
+                    <i data-lucide="check" class="icon" style="width:18px;height:18px;"></i> Verify
+                </button>
+                <button class="btn-danger" onclick="verify({{ vendor.user_id }}, 'reject')">
+                    <i data-lucide="x" class="icon" style="width:18px;height:18px;"></i> Reject
+                </button>
+                <button class="btn-secondary" onclick="verify({{ vendor.user_id }}, 'suspend')">
+                    <i data-lucide="pause" class="icon" style="width:18px;height:18px;"></i> Suspend
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function verify(id, action) {
+    let reason = '';
+    if (action === 'reject') {
+        reason = prompt('Enter rejection reason:');
+        if (reason === null) return;
+        if (reason.trim() === '') {
+            alert('Reason is required.');
+            return;
+        }
+    }
+    if (action === 'suspend') {
+        if (!confirm('Suspend this vendor?')) return;
+    }
+    fetch('/admin/vendors/' + id + '/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, reason: reason })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            location.href = "{{ url_for('admin_pending_vendors') }}";
+        } else {
+            alert(data.message);
+        }
+    });
+}
+</script>
+{% endblock %}

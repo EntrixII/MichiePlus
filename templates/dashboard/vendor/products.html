@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Products | Bizspark</title>
+    <title>My Products | Michie Bizspark</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -371,6 +371,40 @@
             color: #0000c1;
         }
 
+        /* ===== MODERATION STATUS BADGE ===== */
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge.bg-success {
+            background: #e0e4ff;
+            color: #10176b;
+        }
+
+        .badge.bg-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge.bg-danger {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge.bg-secondary {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+
+        .text-danger {
+            color: #ef4444;
+        }
+
+        /* ===== PRODUCT STATUS ===== */
         .product-status {
             display: inline-block;
             padding: 4px 12px;
@@ -726,14 +760,18 @@
                             </td>
                             <td class="product-price">₦{{ product.price }}</td>
                             <td>
-                                {% if product.is_approved %}
-                                    {% if product.is_active %}
-                                        <span class="product-status active">Active</span>
-                                    {% else %}
-                                        <span class="product-status inactive">Inactive</span>
+                                <!-- Moderation Status with Rejection Reason -->
+                                {% if product.status == 'approved' %}
+                                    <span class="badge bg-success">Approved</span>
+                                {% elif product.status == 'pending_review' %}
+                                    <span class="badge bg-warning">Pending Review</span>
+                                {% elif product.status == 'rejected' %}
+                                    <span class="badge bg-danger">Rejected</span>
+                                    {% if product.rejection_reason %}
+                                    <br><small class="text-danger">Reason: {{ product.rejection_reason }}</small>
                                     {% endif %}
                                 {% else %}
-                                    <span class="product-status pending">Pending</span>
+                                    <span class="badge bg-secondary">{{ product.status }}</span>
                                 {% endif %}
                             </td>
                             <td>{{ product.downloads }}</td>
@@ -774,7 +812,7 @@
                 <div class="empty-state">
                     <div class="empty-icon">📦</div>
                     <h3>No products yet</h3>
-                    <p>Start selling your digital products and courses on Bizspark. Upload your first product to get started.</p>
+                    <p>Start selling your digital products and courses on Michie Bizspark. Upload your first product to get started.</p>
                     <a href="{{ url_for('vendor_upload_product') }}" class="btn-primary">
                         + Upload Your First Product
                     </a>
@@ -813,7 +851,6 @@
         document.querySelectorAll('.toggle-switch input').forEach(toggle => {
             toggle.addEventListener('change', function() {
                 // The form will submit automatically due to onchange in HTML
-                // But we can add a subtle confirmation if needed
                 const row = this.closest('tr');
                 const productName = row.querySelector('.product-name a').textContent;
                 const action = this.checked ? 'activate' : 'deactivate';

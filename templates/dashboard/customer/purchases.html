@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Purchases | Bizspark</title>
+    <title>My Purchases | Michie Bizspark</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -153,10 +153,33 @@
         @media (max-width: 640px) {
             .purchases-grid { grid-template-columns: 1fr; }
         }
+
+        .flash-banner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .flash-banner.error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+        .flash-banner.success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
     </style>
 </head>
 <body>
     <div class="container page-transition">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash-banner {{ category }}">
+                        <i data-lucide="{{ 'alert-circle' if category == 'error' else 'check-circle' }}" style="width: 18px; height: 18px;"></i>
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
         <div class="header">
             <h1>
                 <i data-lucide="shopping-bag" class="icon" style="width: 32px; height: 32px; color: #0000c1;"></i>
@@ -176,7 +199,7 @@
                     {% if purchase.item_type == 'cart' %}
                         {% set detail_url = url_for('purchase_detail', purchase_id=purchase.id) %}
                     {% elif purchase.item_type == 'product' %}
-                        {% set detail_url = url_for('product_detail', product_id=purchase.item_id) %}
+                        {% set detail_url = url_for('product_info', product_id=purchase.item_id) %}
                     {% else %}
                         {% set detail_url = url_for('course_detail', course_id=purchase.item_id) %}
                     {% endif %}
@@ -200,13 +223,13 @@
                                 View
                             </a>
 
-                            {% if purchase.item_type == 'product' %}
+                            {% if purchase.item_type == 'product' and purchase.is_digital %}
                                 <a href="{{ url_for('download_product', product_id=purchase.item_id) }}" class="btn-action btn-download">
                                     <i data-lucide="download" style="width: 18px; height: 18px;"></i>
                                     Download
                                 </a>
                             {% elif purchase.item_type == 'course' %}
-                                <a href="{{ url_for('learning') }}" class="btn-action btn-learn">
+                                <a href="{{ url_for('learning_detail', course_id=purchase.item_id) }}" class="btn-action btn-learn">
                                     <i data-lucide="book-open" style="width: 18px; height: 18px;"></i>
                                     Start Learning
                                 </a>

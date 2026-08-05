@@ -1,0 +1,79 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<div class="admin-header">
+    <h1>
+        <i data-lucide="users" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Pending Vendor Applications</span>
+    </h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="table-responsive">
+    <table>
+        <thead>
+            <tr>
+                <th>Business Name</th>
+                <th>Contact Person</th>
+                <th>Email</th>
+                <th>Category</th>
+                <th>Joined</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for vendor in vendors %}
+            <tr>
+                <td><strong>{{ vendor.business_name }}</strong></td>
+                <td>{{ vendor.full_name }}</td>
+                <td>{{ vendor.email }}</td>
+                <td>{{ vendor.business_category or 'N/A' }}</td>
+                <td>{{ vendor.user_since.strftime('%Y-%m-%d') }}</td>
+                <td>
+                    <a href="{{ url_for('admin_vendor_detail', vendor_id=vendor.user_id) }}" class="btn-primary btn-sm">View</a>
+                    <button class="btn-success btn-sm" onclick="verify({{ vendor.user_id }}, 'verify')">Verify</button>
+                    <button class="btn-danger btn-sm" onclick="verify({{ vendor.user_id }}, 'reject')">Reject</button>
+                    <button class="btn-secondary btn-sm" onclick="verify({{ vendor.user_id }}, 'suspend')">Suspend</button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">
+                    <i data-lucide="check-circle" class="icon" style="width:48px;height:48px;margin-bottom:12px;"></i>
+                    <h3>No pending vendor applications</h3>
+                    <p>All vendors have been verified.</p>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function verify(id, action) {
+    let reason = '';
+    if (action === 'reject') {
+        reason = prompt('Enter rejection reason:');
+        if (reason === null) return;
+        if (reason.trim() === '') {
+            alert('Reason is required.');
+            return;
+        }
+    }
+    if (action === 'suspend') {
+        if (!confirm('Suspend this vendor?')) return;
+    }
+    fetch('/admin/vendors/' + id + '/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, reason: reason })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) location.reload();
+        else alert(data.message);
+    });
+}
+</script>
+{% endblock %}

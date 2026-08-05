@@ -1,0 +1,43 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<div class="admin-header">
+    <h1>
+        <i data-lucide="file-text" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Activity Logs</span>
+    </h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="table-responsive">
+    <table>
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Admin</th>
+                <th>Action</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>{{ log.admin_name }}</td>
+                <td>{{ log.action }}</td>
+                <td>{{ log.details }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="4" style="text-align:center;padding:40px;color:#6b7280;">
+                    <i data-lucide="activity" class="icon" style="width:48px;height:48px;margin-bottom:12px;"></i>
+                    <h3>No logs yet</h3>
+                    <p>Admin actions will appear here.</p>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

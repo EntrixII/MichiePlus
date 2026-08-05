@@ -1,34 +1,59 @@
 {% extends "admin/base.html" %}
-{% block title %}Settings{% endblock %}
-{% block page_title %}Settings{% endblock %}
 {% block content %}
-<form method="POST">
-    <div style="margin-bottom: 16px;">
-        <label style="display: block; font-weight: 600;">Commission Rate (%)</label>
-        <input type="number" name="commission_rate" value="{{ settings.get('commission_rate', '30') }}" style="width: 200px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px;">
-    </div>
-    <div style="margin-bottom: 16px;">
-        <label style="display: block; font-weight: 600;">Minimum Withdrawal (₦)</label>
-        <input type="number" name="min_withdrawal" value="{{ settings.get('min_withdrawal', '5000') }}" style="width: 200px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px;">
-    </div>
+<div class="admin-header">
+    <h1>
+        <i data-lucide="settings" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Settings</span>
+    </h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Dashboard
+    </a>
+</div>
 
-    <!-- ===== NEW: Customer Support Settings ===== -->
-    <hr style="margin: 24px 0; border: none; border-top: 1px solid #e5e7eb;">
+<div style="background:white;border-radius:16px;padding:32px;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,0.04);max-width:800px;">
+    <h2 style="font-size:20px;font-weight:700;margin-bottom:8px;">Platform Settings</h2>
+    <p style="color:#6b7280;margin-bottom:24px;">Configure revenue share, withdrawal limits, and support information.</p>
 
-    <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px;">📞 Customer Support Settings</h3>
+    <form method="POST">
+        <!-- Commission Rate -->
+        <div style="margin-bottom:20px;">
+            <label style="display:block;font-weight:600;font-size:14px;margin-bottom:6px;">Commission Rate (%)</label>
+            <input type="number" name="commission_rate" value="{{ settings.get('commission_rate', '30') }}" 
+                   min="0" max="100" step="0.5"
+                   style="width:100%;padding:12px 16px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;">
+            <p style="font-size:12px;color:#6b7280;margin-top:4px;">The percentage deducted from each sale as platform fee.</p>
+        </div>
 
-    <div style="margin-bottom: 16px;">
-        <label style="display: block; font-weight: 600;">WhatsApp Phone Number</label>
-        <input type="text" name="support_phone" value="{{ settings.get('support_phone', '2348012345678') }}" style="width: 300px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px;" placeholder="e.g. 2348012345678">
-        <small style="display: block; color: #6b7280; margin-top: 4px;">Include country code without '+' (e.g., 2348012345678)</small>
-    </div>
+        <!-- Minimum Withdrawal -->
+        <div style="margin-bottom:20px;">
+            <label style="display:block;font-weight:600;font-size:14px;margin-bottom:6px;">Minimum Withdrawal (₦)</label>
+            <input type="number" name="min_withdrawal" value="{{ settings.get('min_withdrawal', '5000') }}" 
+                   min="0" step="100"
+                   style="width:100%;padding:12px 16px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;">
+            <p style="font-size:12px;color:#6b7280;margin-top:4px;">The minimum amount a vendor can request for withdrawal.</p>
+        </div>
 
-    <div style="margin-bottom: 24px;">
-        <label style="display: block; font-weight: 600;">Floating Button Text</label>
-        <input type="text" name="support_button_text" value="{{ settings.get('support_button_text', 'Chat with Admin on WhatsApp') }}" style="width: 400px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px;" placeholder="e.g. Chat with Admin on WhatsApp">
-    </div>
-    <!-- ========================================= -->
+        <!-- Support Phone -->
+        <div style="margin-bottom:20px;">
+            <label style="display:block;font-weight:600;font-size:14px;margin-bottom:6px;">Support Phone Number</label>
+            <input type="text" name="support_phone" value="{{ settings.get('support_phone', '2348012345678') }}" 
+                   placeholder="2348012345678"
+                   style="width:100%;padding:12px 16px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;">
+            <p style="font-size:12px;color:#6b7280;margin-top:4px;">Used for the WhatsApp button (without country code prefix if not needed).</p>
+        </div>
 
-    <button class="btn btn-success" type="submit">Save Settings</button>
-</form>
+        <!-- Support Button Text -->
+        <div style="margin-bottom:20px;">
+            <label style="display:block;font-weight:600;font-size:14px;margin-bottom:6px;">Support Button Text</label>
+            <input type="text" name="support_button_text" value="{{ settings.get('support_button_text', 'Chat with Admin on WhatsApp') }}" 
+                   placeholder="Chat with Admin on WhatsApp"
+                   style="width:100%;padding:12px 16px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-family:inherit;">
+            <p style="font-size:12px;color:#6b7280;margin-top:4px;">Text displayed on the floating WhatsApp button.</p>
+        </div>
+
+        <button type="submit" class="btn-primary" style="width:100%;padding:14px;font-size:16px;">
+            <i data-lucide="save" class="icon" style="width:20px;height:20px;"></i> Save Settings
+        </button>
+    </form>
+</div>
 {% endblock %}

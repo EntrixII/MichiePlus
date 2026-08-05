@@ -1,29 +1,93 @@
 {% extends "admin/base.html" %}
-{% block title %}Pending Products{% endblock %}
-{% block page_title %}Pending Products{% endblock %}
 {% block content %}
-<table>
-    <thead><tr><th>Title</th><th>Vendor</th><th>Price</th><th>Category</th><th>Submitted</th><th>Actions</th></tr></thead>
-    <tbody>
-        {% for product in products %}
-        <tr>
-            <td>{{ product.title }}</td>
-            <td>{{ product.vendor_name }}</td>
-            <td>₦{{ product.price }}</td>
-            <td>{{ product.category }}</td>
-            <td>{{ product.created_at.strftime('%Y-%m-%d') }}</td>
-            <td>
-                <form method="POST" action="{{ url_for('admin_approve_product', product_id=product.id) }}" style="display:inline;">
-                    <button class="btn btn-success" type="submit">Approve</button>
-                </form>
-                <form method="POST" action="{{ url_for('admin_reject_product', product_id=product.id) }}" style="display:inline;">
-                    <button class="btn btn-danger" type="submit">Reject</button>
-                </form>
-            </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="6" style="text-align:center;">No pending products.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="admin-header">
+    <h1>
+        <i data-lucide="package" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Pending Products</span>
+    </h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="table-responsive">
+    <table>
+        <thead>
+            <tr>
+                <th>Image</th>
+                <th>Product</th>
+                <th>Vendor</th>
+                <th>Category</th>
+                <th>Price</th>
+                <th>Uploaded</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for product in products %}
+            <tr>
+                <td>
+                    {% if product.cover_image %}
+                        <img src="{{ product.cover_image }}" alt="{{ product.title }}" style="width:50px;height:50px;object-fit:cover;border-radius:8px;">
+                    {% else %}
+                        <i data-lucide="package" class="icon" style="width:32px;height:32px;color:#9ca3af;"></i>
+                    {% endif %}
+                </td>
+                <td>
+                    <strong>{{ product.title }}</strong>
+                    <br><small style="color:#6b7280;">{{ product.description[:80] }}{% if product.description|length > 80 %}...{% endif %}</small>
+                </td>
+                <td>{{ product.vendor_name }}</td>
+                <td>{{ product.category }}</td>
+                <td>₦{{ product.price }}</td>
+                <td>{{ product.created_at.strftime('%Y-%m-%d') }}</td>
+                <td>
+                    <a href="{{ url_for('admin_product_detail', product_id=product.id) }}" class="btn-primary btn-sm">View</a>
+                    <button class="btn-success btn-sm" onclick="approve({{ product.id }})">Approve</button>
+                    <button class="btn-danger btn-sm" onclick="reject({{ product.id }})">Reject</button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" style="text-align:center;padding:40px;color:#6b7280;">
+                    <i data-lucide="check-circle" class="icon" style="width:48px;height:48px;margin-bottom:12px;"></i>
+                    <h3>No pending products</h3>
+                    <p>All products have been reviewed.</p>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function approve(id) {
+    if (confirm('Approve this product?')) {
+        fetch('/admin/products/' + id + '/approve', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) location.reload();
+            else alert(data.message);
+        });
+    }
+}
+function reject(id) {
+    const reason = prompt('Enter rejection reason:');
+    if (reason === null) return;
+    if (reason.trim() === '') {
+        alert('Reason is required.');
+        return;
+    }
+    fetch('/admin/products/' + id + '/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) location.reload();
+        else alert(data.message);
+    });
+}
+</script>
 {% endblock %}

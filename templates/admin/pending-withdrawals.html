@@ -1,43 +1,73 @@
 {% extends "admin/base.html" %}
-{% block title %}Pending Withdrawals{% endblock %}
-{% block page_title %}Pending Withdrawals{% endblock %}
-
 {% block content %}
-<table>
-    <thead>
-        <tr>
-            <th>Vendor</th>
-            <th>Amount</th>
-            <th>Bank</th>
-            <th>Account Number</th>
-            <th>Account Name</th>
-            <th>Date</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for w in withdrawals %}
-        <tr>
-            <td>{{ w.vendor_name }}</td>
-            <td>₦{{ w.amount }}</td>
-            <td>{{ w.bank_name }}</td>
-            <td>{{ w.bank_account_number }}</td>
-            <td>{{ w.bank_account_name }}</td>
-            <td>{{ w.created_at.strftime('%Y-%m-%d %H:%M') if w.created_at else 'N/A' }}</td>
-            <td>
-                <form method="POST" action="{{ url_for('admin_approve_withdrawal', payout_id=w.id) }}" style="display:inline;">
-                    <button class="btn btn-success" type="submit">Approve</button>
-                </form>
-                <form method="POST" action="{{ url_for('admin_reject_withdrawal', payout_id=w.id) }}" style="display:inline;">
-                    <button class="btn btn-danger" type="submit">Reject</button>
-                </form>
-            </td>
-        </tr>
-        {% else %}
-        <tr>
-            <td colspan="7" style="text-align:center;">No pending withdrawal requests.</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="admin-header">
+    <h1>
+        <i data-lucide="wallet" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Pending Withdrawals</span>
+    </h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="table-responsive">
+    <table>
+        <thead>
+            <tr>
+                <th>Vendor</th>
+                <th>Amount</th>
+                <th>Bank</th>
+                <th>Account</th>
+                <th>Requested</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for withdrawal in withdrawals %}
+            <tr>
+                <td><strong>{{ withdrawal.vendor_name }}</strong></td>
+                <td>₦{{ withdrawal.amount }}</td>
+                <td>{{ withdrawal.bank_name }}</td>
+                <td>{{ withdrawal.bank_account_number }}<br><small>{{ withdrawal.bank_account_name }}</small></td>
+                <td>{{ withdrawal.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>
+                    <button class="btn-success btn-sm" onclick="approve({{ withdrawal.id }})">Approve</button>
+                    <button class="btn-danger btn-sm" onclick="reject({{ withdrawal.id }})">Reject</button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">
+                    <i data-lucide="check-circle" class="icon" style="width:48px;height:48px;margin-bottom:12px;"></i>
+                    <h3>No pending withdrawals</h3>
+                    <p>All withdrawal requests have been processed.</p>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function approve(id) {
+    if (confirm('Approve this withdrawal?')) {
+        fetch('/admin/withdrawals/' + id + '/approve', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) location.reload();
+            else alert(data.message);
+        });
+    }
+}
+function reject(id) {
+    if (confirm('Reject this withdrawal?')) {
+        fetch('/admin/withdrawals/' + id + '/reject', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) location.reload();
+            else alert(data.message);
+        });
+    }
+}
+</script>
 {% endblock %}

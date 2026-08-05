@@ -1,164 +1,268 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Admin Setup | Bizspark</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Setup | Michie Bizspark</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
             font-family: 'Inter', sans-serif;
-            background: #f1f5f9;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             min-height: 100vh;
-            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #f4f6ff;
+            padding: 40px 20px;
         }
+
         .setup-card {
+            max-width: 440px;
+            width: 100%;
             background: white;
             border-radius: 20px;
             padding: 40px 36px;
-            max-width: 420px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.08);
             border: 1px solid #e5e7eb;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.04);
         }
-        .setup-card .brand {
-            text-align: center;
-            margin-bottom: 28px;
+
+        .logo-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            text-decoration: none;
+            color: inherit;
         }
-        .setup-card .brand .logo {
-            font-size: 32px;
+
+        .logo-box {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, #0000c1, #1a1ae6);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 800;
+            font-size: 22px;
+        }
+
+        .logo-text {
+            font-size: 22px;
             font-weight: 800;
             color: #0000c1;
-            letter-spacing: -1px;
+            line-height: 1.2;
         }
-        .setup-card .brand .sub {
-            font-size: 12px;
-            color: #94a3b8;
+
+        .logo-subtext {
+            font-size: 10px;
+            color: #6b7280;
+            letter-spacing: 1px;
+            font-weight: 500;
             text-transform: uppercase;
-            letter-spacing: 1.5px;
-            margin-top: 2px;
         }
-        .setup-card h2 {
-            font-size: 22px;
+
+        .auth-badge {
+            display: inline-block;
+            padding: 4px 14px;
+            background: #e0e4ff;
+            color: #10176b;
+            border-radius: 999px;
+            font-size: 12px;
             font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .setup-card h1 {
+            font-size: 26px;
+            font-weight: 800;
+            color: #111827;
             margin-bottom: 6px;
         }
+
         .setup-card p {
-            color: #64748b;
+            color: #6b7280;
             font-size: 14px;
             margin-bottom: 24px;
         }
+
         .form-group {
             margin-bottom: 16px;
         }
+
         .form-group label {
             display: block;
             font-weight: 600;
-            font-size: 13px;
-            margin-bottom: 4px;
-            color: #1e293b;
+            font-size: 14px;
+            margin-bottom: 6px;
+            color: #111827;
         }
+
         .form-group input {
             width: 100%;
-            padding: 10px 14px;
+            padding: 12px 16px;
             border: 1.5px solid #e5e7eb;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 14px;
-            font-family: inherit;
-            transition: 0.2s;
+            font-family: 'Inter', sans-serif;
+            transition: 0.2s ease;
+            background: white;
         }
+
         .form-group input:focus {
             outline: none;
             border-color: #0000c1;
-            box-shadow: 0 0 0 3px rgba(0, 0, 193,0.1);
+            box-shadow: 0 0 0 4px rgba(0, 0, 193, 0.1);
         }
-        .btn {
+
+        .btn-primary {
             width: 100%;
-            padding: 12px;
-            background: #0000c1;
+            padding: 14px;
+            background: linear-gradient(135deg, #0000c1, #1a1ae6);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 12px;
             font-weight: 700;
-            font-size: 15px;
+            font-size: 16px;
             cursor: pointer;
-            transition: 0.3s;
+            transition: 0.3s ease;
+            margin-top: 4px;
         }
-        .btn:hover {
-            background: #00008f;
-            transform: translateY(-1px);
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 193, 0.25);
         }
-        .flash {
-            padding: 10px 14px;
-            border-radius: 8px;
-            margin-bottom: 16px;
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .back-home {
+            display: inline-block;
+            margin-top: 20px;
+            color: #4b5563;
+            text-decoration: none;
             font-weight: 500;
             font-size: 14px;
+            transition: 0.2s;
         }
-        .flash.success { background: #e0e4ff; color: #10176b; border-left: 4px solid #1a1ae6; }
-        .flash.error { background: #fee2e2; color: #991b1b; border-left: 4px solid #ef4444; }
-        .back-link {
-            display: block;
-            text-align: center;
-            margin-top: 16px;
-            color: #64748b;
-            font-size: 13px;
-            text-decoration: none;
-        }
-        .back-link:hover {
+
+        .back-home:hover {
             color: #0000c1;
-            text-decoration: underline;
+        }
+
+        .flash-messages {
+            margin-bottom: 20px;
+        }
+
+        .flash-message {
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-weight: 500;
+            animation: fadeIn 0.5s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .flash-success {
+            background: #e0e4ff;
+            color: #10176b;
+            border-left: 4px solid #1a1ae6;
+        }
+
+        .flash-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
+
+        .flash-warning {
+            background: #fef3c7;
+            color: #92400e;
+            border-left: 4px solid #f59e0b;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 480px) {
+            .setup-card {
+                padding: 32px 20px;
+            }
+            .setup-card h1 {
+                font-size: 22px;
+            }
         }
     </style>
 </head>
 <body>
 
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="flash-messages" style="max-width:440px;width:100%;">
+                {% for category, message in messages %}
+                    <div class="flash-message flash-{{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
     <div class="setup-card">
-        <div class="brand">
-            <div class="logo">Bizspark</div>
-            <div class="sub">Admin Setup</div>
+        <a href="/" class="logo-wrapper">
+            <div class="logo-box">B</div>
+            <div>
+                <div class="logo-text">Michie Bizspark</div>
+                <div class="logo-subtext">Admin Setup</div>
+            </div>
+        </a>
+
+        <div style="text-align:center;">
+            <span class="auth-badge">🛠️ First Admin</span>
+            <h1>Create Admin Account</h1>
+            <p>No admin exists yet. Set up the first administrator.</p>
         </div>
 
-        <h2>Create Admin Account</h2>
-        <p>This is the first admin account. Fill in the details to get started.</p>
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="flash {{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-
-        <form method="POST">
+        <form method="POST" action="{{ url_for('admin_setup') }}">
             <div class="form-group">
                 <label for="full_name">Full Name</label>
-                <input type="text" id="full_name" name="full_name" placeholder="Admin Name" required>
+                <input type="text" id="full_name" name="full_name" placeholder="John Doe" required>
             </div>
             <div class="form-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" placeholder="admin@Bizspark.com" required>
+                <label for="email">Email Address</label>
+                <input type="email" id="email" name="email" placeholder="admin@example.com" required>
             </div>
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" placeholder="••••••••" required>
+                <input type="password" id="password" name="password" placeholder="Min 8 characters" required>
             </div>
             <div class="form-group">
                 <label for="confirm_password">Confirm Password</label>
-                <input type="password" id="confirm_password" name="confirm_password" placeholder="••••••••" required>
+                <input type="password" id="confirm_password" name="confirm_password" placeholder="Re-enter password" required>
             </div>
-            <button type="submit" class="btn">Create Admin Account</button>
+            <button type="submit" class="btn-primary">Create Admin Account</button>
         </form>
 
-        <a href="{{ url_for('admin_login') }}" class="back-link">← Back to Login</a>
+        <a href="/" class="back-home">← Back to Home</a>
     </div>
 
 </body>

@@ -1,26 +1,103 @@
 {% extends "admin/base.html" %}
-{% block title %}Users{% endblock %}
-{% block page_title %}Users{% endblock %}
 {% block content %}
-<table>
-    <thead><tr><th>Name</th><th>Email</th><th>Type</th><th>Verified</th><th>Status</th><th>Action</th></tr></thead>
-    <tbody>
-        {% for user in users %}
-        <tr>
-            <td>{{ user.full_name }}</td>
-            <td>{{ user.email }}</td>
-            <td>{{ user.user_type }}</td>
-            <td>{{ 'Yes' if user.is_verified else 'No' }}</td>
-            <td>{{ 'Active' if user.is_active else 'Inactive' }}</td>
-            <td>
-                <form method="POST" action="{{ url_for('admin_toggle_user', user_id=user.id) }}">
-                    <button class="btn btn-{{ 'warning' if user.is_active else 'success' }}" type="submit">
-                        {{ 'Deactivate' if user.is_active else 'Activate' }}
-                    </button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="admin-header">
+    <h1>
+        <i data-lucide="users" class="icon" style="width:32px;height:32px;color:#0000c1;"></i>
+        <span>Users</span>
+    </h1>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn-back">
+        <i data-lucide="arrow-left" class="icon"></i> Back to Dashboard
+    </a>
+</div>
+
+<!-- Filters -->
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+    <form method="GET" style="display:flex;gap:8px;flex:1;max-width:400px;">
+        <input type="text" name="search" placeholder="Search users..." value="{{ search }}" 
+               style="flex:1;padding:8px 14px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit;">
+        <button type="submit" class="btn-primary btn-sm">Search</button>
+    </form>
+    <select name="user_type" onchange="window.location.href='?user_type='+this.value+'&search={{ search }}'" 
+            style="padding:8px 14px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:14px;font-family:inherit;background:white;">
+        <option value="all" {% if user_type == 'all' %}selected{% endif %}>All Types</option>
+        <option value="customer" {% if user_type == 'customer' %}selected{% endif %}>Customer</option>
+        <option value="vendor" {% if user_type == 'vendor' %}selected{% endif %}>Vendor</option>
+        <option value="admin" {% if user_type == 'admin' %}selected{% endif %}>Admin</option>
+    </select>
+</div>
+
+<div class="table-responsive">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Username / Business</th>
+                <th>Verified</th>
+                <th>Active</th>
+                <th>Joined</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr>
+                <td>#{{ user.id }}</td>
+                <td>{{ user.full_name }}</td>
+                <td>{{ user.email }}</td>
+                <td>
+                    <span class="badge 
+                        {% if user.user_type == 'admin' %}bg-danger
+                        {% elif user.user_type == 'vendor' %}bg-warning
+                        {% else %}bg-secondary{% endif %}">
+                        {{ user.user_type|capitalize }}
+                    </span>
+                </td>
+                <td>
+                    {% if user.user_type == 'customer' %}
+                        {{ user.username or '—' }}
+                    {% elif user.user_type == 'vendor' %}
+                        {{ user.business_name or '—' }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td>
+                    {% if user.is_verified %}
+                        <span style="color:#0000c1;">✓</span>
+                    {% else %}
+                        <span style="color:#9ca3af;">✗</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if user.is_active %}
+                        <span style="color:#0000c1;">Active</span>
+                    {% else %}
+                        <span style="color:#ef4444;">Inactive</span>
+                    {% endif %}
+                </td>
+                <td>{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                <td>
+                    <form action="{{ url_for('admin_toggle_user', user_id=user.id) }}" method="POST" style="display:inline;">
+                        <button type="submit" class="btn-sm {% if user.is_active %}btn-danger{% else %}btn-success{% endif %}"
+                                onclick="return confirm('Toggle status for {{ user.full_name }}?')">
+                            {{ 'Deactivate' if user.is_active else 'Activate' }}
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9" style="text-align:center;padding:40px;color:#6b7280;">
+                    <i data-lucide="users" class="icon" style="width:48px;height:48px;margin-bottom:12px;"></i>
+                    <h3>No users found</h3>
+                    <p>Try adjusting your search or filter.</p>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}
