@@ -1645,7 +1645,7 @@ def handle_oauth_user(email, full_name, provider, provider_id):
         ''', (
             email,
             full_name,
-            'customer',  # default role
+            None,  # role not chosen yet — must go through /choose-role, not default to 'customer'
             1,  # OAuth users are verified by default
             'google',
             provider_id,
