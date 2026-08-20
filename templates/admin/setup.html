@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Setup | Michie Bizspark</title>
+    <title>Admin Setup | MichiePlus</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -211,6 +211,7 @@
             }
         }
     </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -231,7 +232,7 @@
         <a href="/" class="logo-wrapper">
             <div class="logo-box">B</div>
             <div>
-                <div class="logo-text">Michie Bizspark</div>
+                <div class="logo-text">MichiePlus</div>
                 <div class="logo-subtext">Admin Setup</div>
             </div>
         </a>
@@ -259,6 +260,9 @@
                 <label for="confirm_password">Confirm Password</label>
                 <input type="password" id="confirm_password" name="confirm_password" placeholder="Re-enter password" required>
             </div>
+            {% if turnstile_site_key %}
+            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light" style="margin-bottom: 16px;"></div>
+            {% endif %}
             <button type="submit" class="btn-primary">Create Admin Account</button>
         </form>
 

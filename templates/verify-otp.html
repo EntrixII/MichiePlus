@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Verify OTP | Michie Bizspark</title>
+  <title>Verify OTP | MichiePlus</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -120,6 +120,7 @@
       75% { transform: translateX(8px); }
     }
   </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -130,7 +131,7 @@
     <a href="{{ url_for('index') }}" class="logo-wrapper">
       <div class="logo-icon">B</div>
       <div>
-        <div class="logo-text">Michie Bizspark</div>
+        <div class="logo-text">MichiePlus</div>
         <div class="logo-subtext">LEARN • CONNECT • GROW</div>
       </div>
     </a>
@@ -164,6 +165,11 @@
       <div id="successMessage" class="success-message">
         <span id="successText"></span>
       </div>
+
+      {% if turnstile_site_key %}
+      <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light"
+           data-callback="onTurnstileVerifiedOtp" style="margin-bottom: 16px;"></div>
+      {% endif %}
 
       <div class="otp-input-group">
         <input type="text" id="otpCode" placeholder="000000" maxlength="6" pattern="[0-9]{6}" inputmode="numeric">
@@ -201,6 +207,20 @@
 
     let currentEmail = '{{ email if email else "" }}';
     let isFirstLoad = true;
+    let otpTurnstileToken = '';
+    let otpTurnstilePending = null;
+
+    // Called by the Cloudflare Turnstile widget once the user/browser passes
+    // the challenge. Used to gate both the automatic OTP send and resends
+    // behind server-side bot verification.
+    window.onTurnstileVerifiedOtp = function(token) {
+      otpTurnstileToken = token;
+      if (otpTurnstilePending) {
+        const fn = otpTurnstilePending;
+        otpTurnstilePending = null;
+        fn();
+      }
+    };
 
     function showError(message) {
       successMessage.classList.remove('show');
@@ -246,10 +266,14 @@
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ email: currentEmail })
+          body: JSON.stringify({ email: currentEmail, turnstile_token: otpTurnstileToken })
         });
 
         const result = await response.json();
+
+        if (typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile')) {
+          turnstile.reset();
+        }
 
         if (result.success) {
           showAutoSendStatus('✅ Verification code sent to your email! Check your inbox.', 'sent');
@@ -281,8 +305,16 @@
     }
 
     // ===== AUTO-SEND OTP ON PAGE LOAD =====
+    // When Turnstile is configured, the send is deferred until the widget
+    // reports success via onTurnstileVerifiedOtp(). When it isn't configured
+    // (e.g. local development without keys), fall back to sending immediately.
     if (currentEmail) {
+      {% if turnstile_site_key %}
+      otpTurnstilePending = autoSendOTP;
+      showAutoSendStatus('⏳ Verifying you\'re not a robot...', 'sending');
+      {% else %}
       autoSendOTP();
+      {% endif %}
     } else {
       showAutoSendStatus('❌ No email found. Please go back and try again.', 'error');
     }
@@ -351,16 +383,9 @@
     verifyBtn.addEventListener('click', verifyOTP);
 
     // ===== RESEND OTP =====
-    if (resendBtn) {
-      resendBtn.addEventListener('click', async function() {
-        if (!currentEmail) {
-          resendStatus.textContent = '❌ No email found. Please go back.';
-          resendStatus.style.color = '#dc2626';
-          return;
-        }
-
-        this.disabled = true;
-        this.textContent = 'Sending...';
+    async function doResendOTP() {
+        resendBtn.disabled = true;
+        resendBtn.textContent = 'Sending...';
         resendStatus.textContent = '';
 
         try {
@@ -369,10 +394,14 @@
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ email: currentEmail })
+            body: JSON.stringify({ email: currentEmail, turnstile_token: otpTurnstileToken })
           });
 
           const result = await response.json();
+
+          if (typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile')) {
+            turnstile.reset();
+          }
 
           if (result.success) {
             resendStatus.textContent = '✅ OTP resent successfully!';
@@ -400,9 +429,31 @@
           resendStatus.textContent = '❌ Network error. Please try again.';
           resendStatus.style.color = '#dc2626';
         } finally {
-          this.disabled = false;
-          this.textContent = 'Resend OTP';
+          resendBtn.disabled = false;
+          resendBtn.textContent = 'Resend OTP';
         }
+    }
+
+    if (resendBtn) {
+      resendBtn.addEventListener('click', async function() {
+        if (!currentEmail) {
+          resendStatus.textContent = '❌ No email found. Please go back.';
+          resendStatus.style.color = '#dc2626';
+          return;
+        }
+
+        {% if turnstile_site_key %}
+        // Turnstile tokens are single-use, so get a fresh one before each resend.
+        if (typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile')) {
+          resendBtn.disabled = true;
+          resendStatus.textContent = 'Verifying...';
+          otpTurnstilePending = doResendOTP;
+          turnstile.reset();
+          return;
+        }
+        {% endif %}
+
+        await doResendOTP();
       });
     }
   });

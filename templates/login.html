@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Michie Bizspark | Sign In</title>
+  <title>MichiePlus | Sign In</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -275,6 +275,7 @@
       background: #f8faff;
     }
   </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -285,7 +286,7 @@
     <a href="/" class="logo-wrapper">
       <div class="logo-box">B</div>
       <div>
-        <h2>Michie Bizspark</h2>
+        <h2>MichiePlus</h2>
         <p>LEARN • CONNECT • GROW</p>
       </div>
     </a>
@@ -297,7 +298,7 @@
       <div class="auth-top">
         <span class="auth-badge">Welcome Back</span>
         <h1>Sign in to your account</h1>
-        <p>Continue learning, selling, connecting and growing with Michie Bizspark.</p>
+        <p>Continue learning, selling, connecting and growing with MichiePlus.</p>
       </div>
 
       <!-- Flash Messages -->
@@ -370,6 +371,10 @@
           </label>
           <a href="/forgot-password" class="forgot-link">Forgot Password?</a>
         </div>
+
+        {% if turnstile_site_key %}
+        <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light" style="margin-bottom: 16px;"></div>
+        {% endif %}
 
         <button type="submit" class="primary-btn auth-btn" id="loginBtn">Sign In</button>
       </form>
@@ -593,6 +598,8 @@
               const email = document.getElementById('email').value.trim();
               const password = document.getElementById('password').value;
               const remember = document.getElementById('remember')?.checked || false;
+              const turnstile_token = (typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile'))
+                  ? turnstile.getResponse() : undefined;
 
               if (!email || !password) {
                   showError('Please fill in all fields.');
@@ -610,10 +617,14 @@
                       headers: {
                           'Content-Type': 'application/json',
                       },
-                      body: JSON.stringify({ email, password, remember })
+                      body: JSON.stringify({ email, password, remember, turnstile_token })
                   });
 
                   const result = await response.json();
+
+                  if (typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile')) {
+                      turnstile.reset();
+                  }
 
                   if (result.success) {
                       loginBtn.textContent = '✓ Welcome Back!';

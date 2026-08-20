@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Michie Bizspark | Create Account</title>
+  <title>MichiePlus | Create Account</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,6 +12,7 @@
   <!-- CSS Connections -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/transitions.css') }}" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body class="page-transition">
 
@@ -22,7 +23,7 @@
     <a href="/" class="logo-wrapper">
       <div class="logo-icon">B</div>
       <div>
-        <h1 class="logo-text">Michie Bizspark</h1>
+        <h1 class="logo-text">MichiePlus</h1>
         <p class="logo-subtext">Marketplace & Learning Platform</p>
       </div>
     </a>
@@ -32,7 +33,7 @@
 
     <section class="auth-intro fade-left delay-1">
       <span class="intro-badge">CREATE YOUR ACCOUNT</span>
-      <h2>Start Your <span>Michie Bizspark Journey</span></h2>
+      <h2>Start Your <span>MichiePlus Journey</span></h2>
       <p>Join a modern ecosystem for digital business, online learning, and growth.</p>
     </section>
 
@@ -73,6 +74,10 @@
             <button type="button" class="toggle-password" data-target="confirmPassword">👁</button>
           </div>
         </div>
+
+        {% if turnstile_site_key %}
+        <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light" style="margin-bottom: 16px;"></div>
+        {% endif %}
 
         <button type="submit" class="primary-btn" id="signupBtn">Continue</button>
       </form>
@@ -138,6 +143,8 @@
           const email = document.getElementById("email").value.trim();
           const password = document.getElementById("password").value;
           const confirmPassword = document.getElementById("confirmPassword").value;
+          const turnstile_token = (typeof turnstile !== "undefined" && document.querySelector(".cf-turnstile"))
+              ? turnstile.getResponse() : undefined;
 
           // Client-side validation
           if (!fullName || !email || !password || !confirmPassword) {
@@ -169,12 +176,17 @@
                       full_name: fullName,
                       email: email,
                       password: password,
-                      confirm_password: confirmPassword
+                      confirm_password: confirmPassword,
+                      turnstile_token: turnstile_token
                   })
               });
 
               const result = await response.json();
               console.log("Response:", result); // Debug: Check response
+
+              if (typeof turnstile !== "undefined" && document.querySelector(".cf-turnstile")) {
+                  turnstile.reset();
+              }
 
               if (result.success) {
                   button.textContent = "✓ Success!";

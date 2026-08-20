@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Verify Email | Michie Bizspark</title>
+  <title>Verify Email | MichiePlus</title>
 
   <!-- Google Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -237,6 +237,7 @@
       }
     }
   </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -249,7 +250,7 @@
     <a href="{{ url_for('index') }}" class="logo-wrapper">
       <div class="logo-icon">B</div>
       <div>
-        <div class="logo-text">Michie Bizspark</div>
+        <div class="logo-text">MichiePlus</div>
         <div class="logo-subtext">LEARN • CONNECT • GROW</div>
       </div>
     </a>
@@ -290,6 +291,10 @@
 
       <div class="resend-section">
         <p>Didn't receive the code?</p>
+        {% if turnstile_site_key %}
+        <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="light"
+             data-callback="onTurnstileVerifiedResend" style="margin: 12px 0;"></div>
+        {% endif %}
         <button class="resend-btn" id="resendBtn">Resend Verification Email</button>
         <div id="resendStatus" style="margin-top: 8px; font-size: 14px; color: #2563eb;"></div>
         <div class="timer" id="timer"></div>
@@ -401,13 +406,16 @@
     verifyBtn.addEventListener('click', verifyEmail);
 
     // Resend verification
-    resendBtn.addEventListener('click', async function() {
-      if (resendCooldown > 0) return;
+    let resendTurnstileToken = '';
+    window.onTurnstileVerifiedResend = function(token) {
+      resendTurnstileToken = token;
+    };
 
+    async function doResendVerification() {
       const email = document.getElementById('userEmail').textContent.trim();
 
-      this.disabled = true;
-      this.textContent = 'Sending...';
+      resendBtn.disabled = true;
+      resendBtn.textContent = 'Sending...';
       resendStatus.textContent = '';
       statusText.textContent = '⏳ Sending...';
 
@@ -417,10 +425,15 @@
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ email: email })
+          body: JSON.stringify({ email: email, turnstile_token: resendTurnstileToken })
         });
 
         const result = await response.json();
+
+        if (typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile')) {
+          turnstile.reset();
+          resendTurnstileToken = '';
+        }
 
         if (result.success) {
           resendStatus.textContent = '✅ Verification email sent!';
@@ -458,6 +471,20 @@
         resendBtn.disabled = false;
         resendBtn.textContent = 'Resend Verification Email';
       }
+    }
+
+    resendBtn.addEventListener('click', async function() {
+      if (resendCooldown > 0) return;
+
+      {% if turnstile_site_key %}
+      if (!resendTurnstileToken && typeof turnstile !== 'undefined' && document.querySelector('.cf-turnstile')) {
+        resendStatus.textContent = 'Please complete the verification widget above.';
+        resendStatus.style.color = '#dc2626';
+        return;
+      }
+      {% endif %}
+
+      await doResendVerification();
     });
 
     function updateTimer() {

@@ -178,6 +178,188 @@ ALLOWED_EXTENSIONS = {
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 # ============================================
+# BOT PROTECTION: CLOUDFLARE TURNSTILE
+# ============================================
+# TURNSTILE_SECRET_KEY is NEVER exposed to the frontend - it is only ever
+# read here, server-side, via os.getenv()/os.environ.get().
+import urllib3
+from urllib.parse import urlencode
+
+TURNSTILE_SITE_KEY = os.environ.get('TURNSTILE_SITE_KEY', '')
+TURNSTILE_SECRET_KEY = os.environ.get('TURNSTILE_SECRET_KEY', '')
+TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+IS_PRODUCTION = os.environ.get('FLASK_ENV', '').lower() == 'production'
+
+# Dedicated urllib3 pool with certificate verification explicitly forced ON.
+# This is intentionally independent of the `requests` library so that the
+# Turnstile verification call is never affected by any other SSL settings
+# elsewhere in the codebase.
+_turnstile_http = urllib3.PoolManager(
+    cert_reqs='CERT_REQUIRED',
+    ca_certs=certifi.where()
+)
+
+
+def verify_turnstile_token(token, remote_ip=None):
+    """
+    Server-side verification of a Cloudflare Turnstile token.
+
+    Returns a tuple: (is_valid: bool, error_message: str|None)
+
+    FAIL-SECURE BEHAVIOR:
+    - In production (FLASK_ENV=production), a missing TURNSTILE_SECRET_KEY
+      or a missing/invalid token ALWAYS results in rejection. There is no
+      bypass path.
+    - Outside production, if TURNSTILE_SECRET_KEY is not configured, requests
+      are allowed through so local development does not require a Cloudflare
+      account, but this is clearly logged and can never happen in production
+      because it is gated on FLASK_ENV.
+    """
+    if not TURNSTILE_SECRET_KEY:
+        if IS_PRODUCTION:
+            print("🚫 SECURITY: TURNSTILE_SECRET_KEY is not configured in production. "
+                  "Blocking request instead of silently allowing it.")
+            return False, 'Bot protection is not configured correctly. Please contact support.'
+        else:
+            print("⚠️ TURNSTILE_SECRET_KEY not set - allowing request (DEVELOPMENT ONLY, "
+                  "this path is disabled whenever FLASK_ENV=production).")
+            return True, None
+
+    if not token:
+        return False, 'Please complete the verification challenge and try again.'
+
+    try:
+        body = urlencode({
+            'secret': TURNSTILE_SECRET_KEY,
+            'response': token,
+            'remoteip': remote_ip or ''
+        }).encode('utf-8')
+
+        resp = _turnstile_http.request(
+            'POST',
+            TURNSTILE_VERIFY_URL,
+            body=body,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+            timeout=10.0
+        )
+        result = json.loads(resp.data.decode('utf-8'))
+    except Exception as e:
+        # Never leak internal error details to the client.
+        print(f"🚫 Turnstile verification request failed: {e}")
+        return False, 'Verification service is temporarily unavailable. Please try again.'
+
+    if result.get('success'):
+        return True, None
+
+    print(f"🚫 Turnstile verification failed: {result.get('error-codes')}")
+    return False, 'Verification failed. Please refresh the page and try again.'
+
+
+def _get_turnstile_token_from_request():
+    """Pulls the Turnstile response token from either a JSON body (fetch/AJAX
+    forms) or a classic form POST (server-rendered forms)."""
+    token = None
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        token = data.get('turnstile_token') or data.get('cf-turnstile-response')
+    if not token:
+        token = request.form.get('cf-turnstile-response') or request.form.get('turnstile_token')
+    return token
+
+
+def require_turnstile(f):
+    """
+    Reusable decorator that enforces server-side Cloudflare Turnstile
+    verification on POST requests before the wrapped view runs.
+
+    - Works transparently with both JSON/fetch endpoints (returns JSON errors)
+      and classic server-rendered form POSTs (flashes + redirects back).
+    - GET requests pass through untouched (so the same view can render a form
+      on GET and be protected on POST).
+    - Never trusts the frontend widget alone - always calls Cloudflare's
+      verification endpoint server-side.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if request.method != 'POST':
+            return f(*args, **kwargs)
+
+        token = _get_turnstile_token_from_request()
+        is_valid, error_message = verify_turnstile_token(token, request.remote_addr)
+
+        if not is_valid:
+            wants_json = request.is_json or request.path.startswith('/api/')
+            if wants_json:
+                return jsonify({'success': False, 'message': error_message}), 400
+            flash(error_message, 'error')
+            return redirect(request.url)
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+# ============================================
+# RATE LIMITING (Flask-Limiter)
+# ============================================
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    storage_uri=os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'),
+    default_limits=[],
+    headers_enabled=True,
+    swallow_errors=True,  # never let the limiter's own storage errors take the site down
+)
+
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    """Return JSON for API/fetch clients, and a normal error page for browser navigations."""
+    wants_json = request.is_json or request.path.startswith('/api/') or \
+        request.accept_mimetypes.best == 'application/json'
+    if wants_json:
+        return jsonify({
+            'success': False,
+            'message': 'Too many requests. Please slow down and try again shortly.'
+        }), 429
+    flash('Too many requests. Please slow down and try again shortly.', 'error')
+    return redirect(request.referrer or url_for('login')), 429
+
+
+# ============================================
+# SECURITY HEADERS
+# ============================================
+@app.after_request
+def set_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # CSP deliberately allows the Cloudflare Turnstile script/frame plus the
+    # third-party origins this app already depends on (Google Fonts, its own
+    # inline scripts/styles used throughout the existing templates).
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "frame-src https://challenges.cloudflare.com; "
+        "connect-src 'self' https://challenges.cloudflare.com;"
+    )
+    return response
+
+
+@app.context_processor
+def inject_turnstile_site_key():
+    """Makes {{ turnstile_site_key }} available in every template without
+    having to edit every render_template() call."""
+    return dict(turnstile_site_key=TURNSTILE_SITE_KEY)
+
+
+# ============================================
 # DATABASE HELPER FUNCTIONS
 # ============================================
 
@@ -384,7 +566,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     <body>
         <div class="container">
             <div class="header">
-                <h1>🔔 Michie Bizspark Notification</h1>
+                <h1>🔔 MichiePlus Notification</h1>
             </div>
             <div class="content">
                 <h2>Hi {vendor_name},</h2>
@@ -392,7 +574,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
                 <p style="color: #666; font-size: 14px;">If you have any questions, please contact our support team.</p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 MichiePlus. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -400,13 +582,13 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     """
 
     text_content = f"""
-    Michie Bizspark Notification
+    MichiePlus Notification
 
     Hi {vendor_name},
 
     {message}
 
-    © 2026 Michie Bizspark
+    © 2026 MichiePlus
     """
 
     try:
@@ -4447,6 +4629,8 @@ def index():
 
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute", methods=["POST"])
+@require_turnstile
 def login():
     """User login"""
     if request.method == 'POST':
@@ -4540,6 +4724,8 @@ def login():
 
 
 @app.route('/signup', methods=['GET', 'POST'])
+@limiter.limit("10 per hour", methods=["POST"])
+@require_turnstile
 def signup():
     """User registration - Only creates session, not database"""
     if request.method == 'POST':
@@ -5548,6 +5734,8 @@ def verify_email():
 
 
 @app.route('/resend-verification', methods=['POST'])
+@limiter.limit("10 per hour", methods=["POST"])
+@require_turnstile
 def resend_verification():
     """Resend verification email - No login required"""
     data = request.get_json()
@@ -6517,6 +6705,8 @@ def log_admin_action(admin_id, action, details, target_id=None, target_type=None
     conn.close()
 
 @app.route('/admin/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute", methods=["POST"])
+@require_turnstile
 def admin_login():
     """Admin login page - separate from customer login"""
     # Check if any admin already exists
@@ -6568,6 +6758,8 @@ def admin_login():
 
 
 @app.route('/admin/setup', methods=['GET', 'POST'])
+@limiter.limit("5 per minute", methods=["POST"])
+@require_turnstile
 def admin_setup():
     """Create the first admin account (only if no admin exists)"""
     conn = get_db_connection()
@@ -8265,7 +8457,7 @@ def api_enroll_course_paystack():
 
 def send_purchase_confirmation(email, full_name, item_title, item_type, item_id):
     """Send purchase confirmation email with download link"""
-    subject = f"Your Michie Bizspark Purchase: {item_title}"
+    subject = f"Your MichiePlus Purchase: {item_title}"
 
     download_link = f"{BASE_URL}/download/product/{item_id}" if item_type == 'product' else f"{BASE_URL}/learning"
 
@@ -8300,7 +8492,7 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>Thank you for purchasing <strong>{item_title}</strong> from Michie Bizspark!</p>
+                <p>Thank you for purchasing <strong>{item_title}</strong> from MichiePlus!</p>
 
                 <div style="text-align: center;">
                     <a href="{download_link}" class="btn">
@@ -8313,7 +8505,7 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
                 </p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 MichiePlus. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -8325,13 +8517,13 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
 
     Hi {full_name},
 
-    Thank you for purchasing {item_title} from Michie Bizspark!
+    Thank you for purchasing {item_title} from MichiePlus!
 
     Download link: {download_link}
 
     You can also access this item anytime from your dashboard.
 
-    © 2026 Michie Bizspark
+    © 2026 MichiePlus
     """
 
     # If email not configured, print to console
@@ -9170,7 +9362,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     <body>
         <div class="container">
             <div class="header">
-                <h1>🔔 Michie Bizspark Notification</h1>
+                <h1>🔔 MichiePlus Notification</h1>
             </div>
             <div class="content">
                 <h2>Hi {vendor_name},</h2>
@@ -9178,7 +9370,7 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
                 <p style="color: #666; font-size: 14px;">If you have any questions, please contact our support team.</p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 MichiePlus. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -9186,13 +9378,13 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
     """
 
     text_content = f"""
-    Michie Bizspark Notification
+    MichiePlus Notification
 
     Hi {vendor_name},
 
     {message}
 
-    © 2026 Michie Bizspark
+    © 2026 MichiePlus
     """
 
     try:
@@ -9225,7 +9417,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
     if not verification_code:
         verification_code = generate_verification_code()
 
-    subject = "Verify Your Michie Bizspark Account"
+    subject = "Verify Your MichiePlus Account"
 
     # HTML email content with both link and code
     html_content = f"""
@@ -9271,11 +9463,11 @@ def send_verification_email(email, full_name, verification_token, verification_c
     <body>
         <div class="container">
             <div class="header">
-                <h1>🎉 Welcome to Michie Bizspark!</h1>
+                <h1>🎉 Welcome to MichiePlus!</h1>
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>Thank you for creating an account with Michie Bizspark! Please verify your email address.</p>
+                <p>Thank you for creating an account with MichiePlus! Please verify your email address.</p>
 
                 <div style="text-align: center;">
                     <a href="{verification_url}" class="btn">Verify Email Address</a>
@@ -9300,7 +9492,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
                 </p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 MichiePlus. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -9309,7 +9501,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
 
     # Plain text fallback
     text_content = f"""
-    Welcome to Michie Bizspark, {full_name}!
+    Welcome to MichiePlus, {full_name}!
 
     Verify your email using one of these methods:
 
@@ -9320,7 +9512,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
 
     If you didn't create an account, you can safely ignore this email.
 
-    © 2026 Michie Bizspark
+    © 2026 MichiePlus
     """
 
     # If email not configured, print to console
@@ -9369,6 +9561,7 @@ def verify_email_page():
 
 
 @app.route('/verify-code', methods=['POST'])
+@limiter.limit("5 per 10 minutes", methods=["POST"])
 def verify_code():
     """Verify email using 6-digit code"""
     data = request.get_json()
@@ -9532,6 +9725,8 @@ def generate_otp():
 
 @app.route('/forgot-password', methods=['GET', 'POST'])
 @app.route('/forgot_password', methods=['GET', 'POST'])
+@limiter.limit("3 per 10 minutes", methods=["POST"])
+@require_turnstile
 def forgot_password():
     """Step 1: User enters email to request reset link"""
     if request.method == 'POST':
@@ -9621,6 +9816,8 @@ def forgot_password():
 
 
 @app.route('/send-password-otp', methods=['POST'])
+@limiter.limit("3 per 10 minutes", methods=["POST"])
+@require_turnstile
 def send_password_otp():
     """Send OTP as alternative to reset link"""
     data = request.get_json()
@@ -9683,6 +9880,7 @@ def send_password_otp():
 
 
 @app.route('/verify-password-otp', methods=['POST'])
+@limiter.limit("5 per 10 minutes", methods=["POST"])
 def verify_password_otp():
     """Step 3B: Verify OTP and redirect to reset password page"""
     data = request.get_json()
@@ -9753,6 +9951,8 @@ def verify_password_otp():
 
 @app.route('/reset-password/<token>', methods=['GET', 'POST'])
 @app.route('/reset_password/<token>', methods=['GET', 'POST'])
+@limiter.limit("5 per 10 minutes", methods=["POST"])
+@require_turnstile
 def reset_password_with_token(token):
     """Step 3A & 4: Verify token and allow user to enter new password"""
     conn = get_db_connection()
@@ -10232,7 +10432,7 @@ def inbox():
     conversations = [
         {'avatar': 'C', 'name': 'Cadmus Tech', 'preview': 'Thanks for purchasing our course!', 'time': '2m', 'active': True},
         {'avatar': 'S', 'name': 'Sarah Johnson', 'preview': "Let's collaborate on a project.", 'time': '15m', 'active': False},
-        {'avatar': 'B', 'name': 'Michie Bizspark Support', 'preview': 'Your request has been received.', 'time': '1h', 'active': False},
+        {'avatar': 'B', 'name': 'MichiePlus Support', 'preview': 'Your request has been received.', 'time': '1h', 'active': False},
         {'avatar': 'D', 'name': 'David Smith', 'preview': 'Can you review my portfolio?', 'time': 'Yesterday', 'active': False}
     ]
 
@@ -10784,7 +10984,7 @@ def send_chat_message():
         """, (message, conversation_id))
 
     # ===== Insert message using the CORRECT schema =====
-    cursor.execute("""
+    cursor.execute
         INSERT INTO messages (conversation_id, sender_id, receiver_id, text, type, is_read)
         VALUES (%s, %s, %s, %s, 'sent', 0)
     """, (conversation_id, user_id, vendor_id, message))
@@ -10798,7 +10998,7 @@ def send_password_reset_email(email, full_name, reset_token):
     """Send password reset email with secure link"""
     reset_url = f"{BASE_URL}/reset-password/{reset_token}"
 
-    subject = "Reset Your Michie Bizspark Password"
+    subject = "Reset Your MichiePlus Password"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -10842,7 +11042,7 @@ def send_password_reset_email(email, full_name, reset_token):
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>We received a request to reset your Michie Bizspark password. Click the button below to create a new password:</p>
+                <p>We received a request to reset your MichiePlus password. Click the button below to create a new password:</p>
 
                 <div style="text-align: center;">
                     <a href="{reset_url}" class="btn">Reset Password</a>
@@ -10857,7 +11057,7 @@ def send_password_reset_email(email, full_name, reset_token):
                 </div>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 MichiePlus. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -10869,7 +11069,7 @@ def send_password_reset_email(email, full_name, reset_token):
 
     Hi {full_name},
 
-    We received a request to reset your Michie Bizspark password.
+    We received a request to reset your MichiePlus password.
 
     Click the link below to create a new password:
     {reset_url}
@@ -10878,7 +11078,7 @@ def send_password_reset_email(email, full_name, reset_token):
 
     If you didn't request a password reset, you can safely ignore this email.
 
-    © 2026 Michie Bizspark
+    © 2026 MichiePlus
     """
 
     # If email not configured, print to console
@@ -10922,7 +11122,7 @@ def verify_otp_page():
 
 def send_otp_email(email, full_name, otp):
     """Send OTP email"""
-    subject = "Password Reset OTP - Michie Bizspark"
+    subject = "Password Reset OTP - MichiePlus"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -10968,7 +11168,7 @@ def send_otp_email(email, full_name, otp):
             </div>
             <div class="content">
                 <h2>Hi {full_name},</h2>
-                <p>You requested to reset your Michie Bizspark password. Use the OTP code below:</p>
+                <p>You requested to reset your MichiePlus password. Use the OTP code below:</p>
 
                 <div class="code-box">
                     <div class="code">{otp}</div>
@@ -10981,7 +11181,7 @@ def send_otp_email(email, full_name, otp):
                 </div>
             </div>
             <div class="footer">
-                <p>&copy; 2026 Michie Bizspark. All rights reserved.</p>
+                <p>&copy; 2026 MichiePlus. All rights reserved.</p>
             </div>
         </div>
     </body>
@@ -10999,7 +11199,7 @@ def send_otp_email(email, full_name, otp):
 
     If you didn't request this, you can safely ignore this email.
 
-    © 2026 Michie Bizspark
+    © 2026 MichiePlus
     """
 
     if not EMAIL_USER or not EMAIL_PASSWORD:
@@ -11026,6 +11226,8 @@ def send_otp_email(email, full_name, otp):
             server.starttls()
             server.login(EMAIL_USER, password)
             server.send_message(msg)
+
+
 
         print(f"✅ OTP email sent to: {email}")
         return True

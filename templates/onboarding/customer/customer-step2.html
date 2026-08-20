@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Customer Setup | Step 2 | Michie Bizspark</title>
+    <title>Customer Setup | Step 2 | MichiePlus</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -206,7 +206,7 @@
     <a href="{{ url_for('index') }}" class="logo-wrapper">
         <div class="logo-icon">B</div>
         <div>
-            <h1 class="logo-text">Michie Bizspark</h1>
+            <h1 class="logo-text">MichiePlus</h1>
             <p class="logo-subtext">Marketplace & Learning Platform</p>
         </div>
     </a>
@@ -217,7 +217,7 @@
         <div class="wizard-top">
             <span class="wizard-step">Step 2 of 5</span>
             <h2>Interests & Preferences</h2>
-            <p>Help us personalize your Michie Bizspark experience.</p>
+            <p>Help us personalize your MichiePlus experience.</p>
 
             <div class="progress">
                 <div class="progress-fill progress-40"></div>
@@ -238,7 +238,7 @@
 
         <form id="customerStep2Form">
             <div class="input-group">
-                <label>What brings you to Michie Bizspark?</label>
+                <label>What brings you to MichiePlus?</label>
                 <select id="purpose" required>
                     <option value="">Select one</option>
                     <option value="Learn New Skills">Learn New Skills</option>
@@ -320,7 +320,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Validate
             if (!data.purpose) {
-                alert('Please select what brings you to Michie Bizspark.');
+                alert('Please select what brings you to MichiePlus.');
                 button.disabled = false;
                 button.textContent = 'Continue →';
                 return;

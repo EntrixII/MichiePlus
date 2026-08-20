@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Product | Michie Bizspark</title>
+    <title>Upload Product | MichiePlus</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -242,7 +242,7 @@
             font-size: 16px;
         }
 
-        .price-calculator .calc-row .value.Michie Bizspark-fee {
+        .price-calculator .calc-row .value.MichiePlus-fee {
             color: #ef4444;
         }
 
@@ -643,7 +643,7 @@
                 <i data-lucide="edit-3" class="icon" style="width: 24px; height: 24px; color: #0000c1;"></i>
                 Product Details
             </h2>
-            <p class="subtitle">Fill in the details below to list your product on Michie Bizspark.</p>
+            <p class="subtitle">Fill in the details below to list your product on MichiePlus.</p>
 
             <form id="uploadForm" method="POST" enctype="multipart/form-data">
                 <div class="form-group">
@@ -686,7 +686,7 @@
                 <div class="form-group">
                     <label>Price (₦) <span class="required">*</span></label>
                     <input type="number" name="price" id="priceInput" placeholder="0.00" step="0.01" min="0.01" required>
-                    <div class="helper-text">You will receive 70% of each sale. Michie Bizspark retains 30%.</div>
+                    <div class="helper-text">You will receive 70% of each sale. MichiePlus retains 30%.</div>
 
                     <!-- Price Calculator -->
                     <div class="price-calculator" id="priceCalculator">
@@ -695,8 +695,8 @@
                             <span class="value">₦<span id="displayPrice">0.00</span></span>
                         </div>
                         <div class="calc-row">
-                            <span class="label">Michie Bizspark Fee (30%)</span>
-                            <span class="value Michie Bizspark-fee">-₦<span id="Michie BizsparkFee">0.00</span></span>
+                            <span class="label">MichiePlus Fee (30%)</span>
+                            <span class="value MichiePlus-fee">-₦<span id="MichiePlusFee">0.00</span></span>
                         </div>
                         <hr class="calc-divider">
                         <div class="calc-total">
@@ -860,7 +860,7 @@
         const priceInput = document.getElementById('priceInput');
         const priceCalculator = document.getElementById('priceCalculator');
         const displayPrice = document.getElementById('displayPrice');
-        const Michie BizsparkFee = document.getElementById('Michie BizsparkFee');
+        const MichiePlusFee = document.getElementById('MichiePlusFee');
         const yourProfit = document.getElementById('yourProfit');
 
         function calculateProfit() {
@@ -873,7 +873,7 @@
                 const profit = price * 0.70;
 
                 displayPrice.textContent = price.toFixed(2);
-                Michie BizsparkFee.textContent = fee.toFixed(2);
+                MichiePlusFee.textContent = fee.toFixed(2);
                 yourProfit.textContent = profit.toFixed(2);
             } else {
                 priceCalculator.classList.remove('visible');

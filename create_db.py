@@ -13,7 +13,7 @@ def create_database():
 
     # Read the schema file
     with open('database.sqlite.sql', 'r') as f:
-        schema = f.read()
+        schempa = f.read()
 
     # Create connection and execute schema
     conn = sqlite3.connect(db_path)
