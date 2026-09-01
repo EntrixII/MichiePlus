@@ -10,6 +10,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Paystack Inline JS v2 -- this is what actually opens the payment
+         popup. Without this script tag, PaystackPop is never defined and
+         there is nothing to open, which is why the modal previously never
+         appeared. -->
+    <script src="https://js.paystack.co/v2/inline.js"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -40,11 +45,8 @@
         .summary-divider { border: none; border-top: 1px solid #e5e7eb; margin: 12px 0; }
         .summary-total { font-size: 20px; font-weight: 800; color: #0000c1; }
 
-        .promo-box { display: flex; gap: 8px; margin: 16px 0; }
-        .promo-box input { flex: 1; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 14px; font-family: inherit; outline: none; }
-        .promo-box input:focus { border-color: #0000c1; }
-        .promo-box button { padding: 8px 16px; background: #0000c1; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
-        .promo-box button:hover { background: #00008f; }
+        .status-line { text-align: center; color: #6b7280; font-size: 13px; margin-top: 16px; min-height: 18px; }
+        .status-line.error { color: #b42318; }
 
         .pay-button { width: 100%; padding: 16px; background: linear-gradient(135deg, #0000c1, #1a1ae6); color: white; border: none; border-radius: 12px; font-size: 18px; font-weight: 700; cursor: pointer; transition: 0.3s ease; display: flex; align-items: center; justify-content: center; gap: 10px; }
         .pay-button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 193,0.25); }
@@ -80,17 +82,17 @@
 
                 <div class="form-group">
                     <label>Full Name</label>
-                    <input type="text" id="fullName" placeholder="John Doe" required>
+                    <input type="text" id="fullName" placeholder="John Doe" value="{{ customer.full_name or '' }}" required>
                 </div>
 
                 <div class="form-group">
                     <label>Email Address</label>
-                    <input type="email" id="email" placeholder="john@example.com" required>
+                    <input type="email" id="email" placeholder="john@example.com" value="{{ customer.email or '' }}" required>
                 </div>
 
                 <div class="form-group">
                     <label>Phone Number</label>
-                    <input type="tel" id="phone" placeholder="+234 800 000 0000" required>
+                    <input type="tel" id="phone" placeholder="+234 800 000 0000" value="{{ customer.phone_number or '' }}" required>
                 </div>
 
                 {% if has_physical_items %}
@@ -160,10 +162,20 @@
                             (Physical)
                         {% endif %}
                     </span>
-                    <span class="value">₦{{ item.price }}</span>
+                    <span class="value">₦{{ '%.2f'|format(item.price * item.quantity) }}</span>
                 </div>
                 {% endfor %}
 
+                <hr class="summary-divider">
+
+                <div class="summary-row">
+                    <span>Subtotal</span>
+                    <span class="value" id="subtotalDisplay">₦{{ '%.2f'|format(subtotal) }}</span>
+                </div>
+                <div class="summary-row">
+                    <span>VAT (7.5%)</span>
+                    <span class="value" id="vatDisplay">₦{{ '%.2f'|format(vat) }}</span>
+                </div>
                 {% if has_physical_items %}
                 <div class="summary-row shipping-row">
                     <span>Shipping</span>
@@ -175,22 +187,15 @@
 
                 <div class="summary-row summary-total">
                     <span>Total</span>
-                    <span>₦<span id="totalDisplay">{{ total_price }}</span></span>
+                    <span>₦<span id="totalDisplay">{{ '%.2f'|format(total_price) }}</span></span>
                 </div>
 
-                <div class="promo-box">
-                    <input type="text" id="promoCode" placeholder="Promo code">
-                    <button onclick="applyPromo()">Apply</button>
-                </div>
-
-                <button class="pay-button" id="payButton" onclick="initiatePayment()">
+                <button class="pay-button" id="payButton">
                     <i data-lucide="lock" class="icon"></i>
-                    Pay ₦<span id="payAmount">{{ total_price }}</span>
+                    Pay ₦<span id="payAmount">{{ '%.2f'|format(total_price) }}</span>
                 </button>
 
-                <p style="text-align: center; color: #6b7280; font-size: 13px; margin-top: 16px;">
-                    Secured by <strong>Paystack</strong> • You'll be redirected to complete payment
-                </p>
+                <p class="status-line" id="statusLine">Secured by <strong>Paystack</strong></p>
             </div>
         </div>
     </div>
@@ -198,109 +203,148 @@
     <script>
         lucide.createIcons();
 
-        let shippingCost = 0;
-        let totalAmount = {{ total_price }};
+        const subtotal = {{ subtotal }};
+        const vat = {{ vat }};
+        const publicKey = {{ paystack_public_key|tojson }};
+        const customerEmail = {{ (customer.email or '')|tojson }};
+        const hasPhysicalItems = {{ 'true' if has_physical_items else 'false' }};
 
-        {% if has_physical_items %}
-        document.getElementById('shippingCountry').addEventListener('change', function() {
-            const country = this.value;
-            if (country === 'Nigeria') shippingCost = 2000;
-            else if (country === 'Ghana' || country === 'Kenya') shippingCost = 5000;
-            else if (country === 'South Africa') shippingCost = 8000;
-            else shippingCost = 10000;
+        // Client-side shipping estimate shown as the buyer picks a country.
+        // This is DISPLAY ONLY -- the amount actually charged always comes
+        // back from the server response after /api/checkout/cart/initiate,
+        // since the server looks the rate up itself rather than trusting
+        // whatever this script computes.
+        const SHIPPING_ESTIMATES = { Nigeria: 2000, Ghana: 5000, Kenya: 5000, 'South Africa': 8000 };
 
-            document.getElementById('shippingCostDisplay').textContent = `₦${shippingCost.toFixed(2)}`;
-            updateTotal();
-        });
-        document.getElementById('shippingCountry').dispatchEvent(new Event('change'));
-        {% endif %}
-
-        function updateTotal() {
-            totalAmount = {{ total_price }} + shippingCost;
-            document.getElementById('totalDisplay').textContent = totalAmount.toFixed(2);
-            document.getElementById('payAmount').textContent = totalAmount.toFixed(2);
+        function estimatedShipping() {
+            if (!hasPhysicalItems) return 0;
+            const country = document.getElementById('shippingCountry').value;
+            return SHIPPING_ESTIMATES[country] ?? 10000;
         }
 
-        function applyPromo() {
-            const code = document.getElementById('promoCode').value.trim();
-            if (!code) {
-                alert('Please enter a promo code.');
+        function refreshTotals() {
+            const shipping = estimatedShipping();
+            const total = subtotal + vat + shipping;
+            if (hasPhysicalItems) {
+                document.getElementById('shippingCostDisplay').textContent = `₦${shipping.toFixed(2)}`;
+            }
+            document.getElementById('totalDisplay').textContent = total.toFixed(2);
+            document.getElementById('payAmount').textContent = total.toFixed(2);
+        }
+
+        if (hasPhysicalItems) {
+            document.getElementById('shippingCountry').addEventListener('change', refreshTotals);
+            refreshTotals();
+        }
+
+        function setStatus(message, isError) {
+            const el = document.getElementById('statusLine');
+            el.textContent = message;
+            el.className = 'status-line' + (isError ? ' error' : '');
+        }
+
+        function resetButton() {
+            const payButton = document.getElementById('payButton');
+            payButton.disabled = false;
+            payButton.innerHTML = `<i data-lucide="lock" class="icon"></i> Pay ₦${document.getElementById('payAmount').textContent}`;
+            lucide.createIcons();
+        }
+
+        function openPaystackPopup(data) {
+            // Preferred path: a real popup using the server-issued access
+            // code, so the amount is locked server-side and can't be
+            // tampered with from the browser.
+            if (typeof PaystackPop !== 'undefined' && data.access_code) {
+                const popup = new PaystackPop();
+                popup.checkout({
+                    accessCode: data.access_code,
+                    onSuccess: function (transaction) {
+                        setStatus('Payment received, verifying…');
+                        window.location.href =
+                            '{{ url_for("verify_cart_payment") }}?reference=' + encodeURIComponent(transaction.reference);
+                    },
+                    onClose: function () {
+                        setStatus('Payment window closed. You can try again.');
+                        resetButton();
+                    },
+                });
                 return;
             }
-            alert('Promo code "' + code + '" applied! (Demo)');
+            // Fallback: if the Paystack script failed to load (blocked by
+            // an ad blocker, offline, CDN hiccup) fall back to the hosted
+            // redirect page instead of leaving the button stuck.
+            if (data.authorization_url) {
+                window.location.href = data.authorization_url;
+                return;
+            }
+            setStatus('Unable to open the payment window. Please try again.', true);
+            resetButton();
         }
 
         function initiatePayment() {
             const payButton = document.getElementById('payButton');
-            const originalText = payButton.innerHTML;
 
-            // Validate customer info
             const fullName = document.getElementById('fullName').value.trim();
             const email = document.getElementById('email').value.trim();
             const phone = document.getElementById('phone').value.trim();
             if (!fullName || !email || !phone) {
-                alert('Please fill in all customer information fields.');
+                setStatus('Please fill in all customer information fields.', true);
                 return;
             }
-
-            {% if has_physical_items %}
-            const address1 = document.getElementById('shippingAddress1').value.trim();
-            const city = document.getElementById('shippingCity').value.trim();
-            const state = document.getElementById('shippingState').value.trim();
-            const country = document.getElementById('shippingCountry').value;
-            if (!address1 || !city || !state || !country) {
-                alert('Please fill in all required shipping fields.');
-                return;
-            }
-            {% endif %}
-
-            payButton.disabled = true;
-            payButton.innerHTML = `
-                <i data-lucide="loader-2" class="icon" style="animation: spin 1s linear infinite;"></i>
-                Processing...
-            `;
-            lucide.createIcons();
 
             let shippingAddress = null;
-            {% if has_physical_items %}
-            const address2 = document.getElementById('shippingAddress2').value.trim();
-            const postal = document.getElementById('shippingPostal').value.trim();
-            shippingAddress = `${fullName}\n${address1}${address2 ? '\n' + address2 : ''}\n${city}, ${state} ${postal}\n${country}`;
-            {% endif %}
+            let shippingCountry = null;
+            if (hasPhysicalItems) {
+                const address1 = document.getElementById('shippingAddress1').value.trim();
+                const city = document.getElementById('shippingCity').value.trim();
+                const state = document.getElementById('shippingState').value.trim();
+                shippingCountry = document.getElementById('shippingCountry').value;
+                if (!address1 || !city || !state || !shippingCountry) {
+                    setStatus('Please fill in all required shipping fields.', true);
+                    return;
+                }
+                const address2 = document.getElementById('shippingAddress2').value.trim();
+                const postal = document.getElementById('shippingPostal').value.trim();
+                shippingAddress = `${fullName}\n${address1}${address2 ? '\n' + address2 : ''}\n${city}, ${state} ${postal}\n${shippingCountry}`;
+            }
+
+            payButton.disabled = true;
+            payButton.innerHTML = `<i data-lucide="loader-2" class="icon" style="animation: spin 1s linear infinite;"></i> Processing...`;
+            lucide.createIcons();
+            setStatus('Setting up your payment…');
 
             fetch('/api/checkout/cart/initiate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     shipping_address: shippingAddress,
-                    shipping_cost: shippingCost
+                    shipping_country: shippingCountry,
                 })
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success && data.authorization_url) {
-                    window.location.href = data.authorization_url;
-                } else {
-                    alert(data.message || 'Failed to initiate payment. Please try again.');
+                .then((response) => response.json().then((body) => ({ ok: response.ok, body })))
+                .then(({ ok, body }) => {
+                    if (!ok || !body.success) {
+                        setStatus(body.message || 'Failed to initiate payment. Please try again.', true);
+                        resetButton();
+                        return;
+                    }
+                    // Reconcile the displayed total with the server's
+                    // authoritative figures, in case the client-side
+                    // shipping estimate differed slightly.
+                    if (body.amount) {
+                        document.getElementById('totalDisplay').textContent = body.amount;
+                        document.getElementById('payAmount').textContent = body.amount;
+                    }
+                    openPaystackPopup(body);
+                })
+                .catch((error) => {
+                    console.error('Checkout initiate failed:', error);
+                    setStatus('Network error. Please try again.', true);
                     resetButton();
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Network error. Please try again.');
-                resetButton();
-            });
+                });
         }
 
-        function resetButton() {
-            const payButton = document.getElementById('payButton');
-            payButton.disabled = false;
-            payButton.innerHTML = `
-                <i data-lucide="lock" class="icon"></i>
-                Pay ₦${totalAmount.toFixed(2)}
-            `;
-            lucide.createIcons();
-        }
+        document.getElementById('payButton').addEventListener('click', initiatePayment);
     </script>
 </body>
 </html>

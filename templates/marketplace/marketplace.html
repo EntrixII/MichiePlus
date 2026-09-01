@@ -1,2192 +1,515 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marketplace | MichiePlus</title>
 
-    <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0">
+  <!-- Modern Geometric Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <title>Marketplace | MichiePlus</title>
+  <style>
+    /* Blue & White Theme System */
+    :root {
+      --bg-main: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-glass: rgba(255, 255, 255, 0.85);
+      --border-color: #e2e8f0;
+      --border-hover: #93c5fd;
+      --primary: #2563eb;          /* Royal Blue */
+      --primary-hover: #1d4ed8;    /* Darker Blue */
+      --primary-light: #eff6ff;    /* Ice Blue Accent */
+      --text-main: #0f172a;       /* Deep Navy */
+      --text-muted: #64748b;      /* Slate Gray */
+      --danger: #ef4444;
+      --accent-badge: #dbeafe;     /* Light Blue Badge */
+      --badge-text: #1e40af;       /* Navy Badge Text */
+      --radius-sm: 8px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --radius-full: 9999px;
+      --shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.08);
+      --shadow-hover: 0 20px 30px -10px rgba(37, 99, 235, 0.15);
+    }
 
-    <link rel="preconnect"
-          href="https://fonts.googleapis.com">
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
-    <link rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossorigin>
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding-bottom: 60px;
+    }
 
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-          rel="stylesheet">
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
 
-    <link rel="stylesheet"
-      href="../../assets/css/style.css">
+    .shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
 
-    <link rel="stylesheet"
-      href="../../assets/css/transitions.css">
+    /* Sticky Navigation Bar */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      background: var(--bg-glass);
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 32px;
+    }
 
-    <link rel="stylesheet"
-      href="../../assets/css/marketplace.css">
+    .topbar-content {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
 
+    .brand {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+    }
+
+    .brand-accent {
+      color: var(--primary);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .button, .cart-link {
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 10px 18px;
+      border-radius: var(--radius-full);
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+
+    .button:hover, .cart-link:hover {
+      border-color: var(--primary);
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .badge {
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+      font-weight: 700;
+      min-width: 20px;
+      text-align: center;
+    }
+
+    /* Hero Header */
+    .hero {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-top: 16px;
+    }
+
+    .hero h1 {
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -1px;
+      margin-bottom: 12px;
+    }
+
+    .hero h1 span {
+      background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      max-width: 600px;
+      margin: 0 auto;
+      color: var(--text-muted);
+      font-size: 1.125rem;
+    }
+
+    /* Filters & Modern Search */
+    .filters {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+
+    .filters form {
+      max-width: 680px;
+      margin: 0 auto;
+      width: 100%;
+      position: relative;
+      display: flex;
+      gap: 8px;
+    }
+
+    .filters input {
+      width: 100%;
+      padding: 16px 24px;
+      padding-right: 130px;
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-full);
+      color: var(--text-main);
+      font-size: 1rem;
+      outline: none;
+      box-shadow: var(--shadow);
+      transition: all 0.3s ease;
+    }
+
+    .filters input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 20px rgba(37, 99, 235, 0.15);
+    }
+
+    .filters button {
+      position: absolute;
+      right: 6px;
+      top: 6px;
+      bottom: 6px;
+      padding: 0 24px;
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      border-radius: var(--radius-full);
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .filters button:hover {
+      background: var(--primary-hover);
+    }
+
+    .chips {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 8px 18px;
+      border-radius: var(--radius-full);
+      font-size: 0.875rem;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .chip:hover, .chip.active {
+      background: var(--primary-light);
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    /* Notice Block */
+    .notice {
+      padding: 16px 20px;
+      border-radius: var(--radius-md);
+      background: #fef2f2;
+      border: 1px solid #fee2e2;
+      color: var(--danger);
+      margin-bottom: 24px;
+      font-weight: 500;
+    }
+
+    /* Modern Grid & Cards */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .card:hover {
+      transform: translateY(-6px);
+      border-color: var(--border-hover);
+      box-shadow: var(--shadow-hover);
+    }
+
+    .card-image {
+      position: relative;
+      width: 100%;
+      height: 200px;
+      background: #f1f5f9;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      text-decoration: none;
+    }
+
+    .card-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.5s ease;
+    }
+
+    .card:hover .card-image img {
+      transform: scale(1.05);
+    }
+
+    .placeholder {
+      font-size: 40px;
+      color: #cbd5e1;
+    }
+
+    .body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      flex-grow: 1;
+    }
+
+    .eyebrow {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin: 0 0 8px 0;
+      color: var(--text-main);
+      line-height: 1.3;
+    }
+
+    .description {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      height: 42px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      margin-bottom: 16px;
+    }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: auto;
+      padding-bottom: 16px;
+    }
+
+    .price {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--primary);
+    }
+
+    .meta span:last-child {
+      color: #d97706;
+      font-weight: 700;
+      font-size: 0.875rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .actions a, .actions button {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      font-weight: 700;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .view {
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      background: #ffffff;
+    }
+
+    .view:hover {
+      background: var(--primary-light);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .add {
+      border: 1px solid rgba(37, 99, 235, 0.2);
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+
+    .add:hover {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+
+    .add:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 64px 20px;
+      background: #ffffff;
+      border: 1px dashed var(--border-color);
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .empty h2 {
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+
+    @media (max-width: 640px) {
+      .filters form input { padding-right: 24px; margin-bottom: 8px; }
+      .filters form button { position: static; width: 100%; height: 48px; }
+      .filters form { flex-direction: column; }
+    }
+  </style>
 </head>
+<body>
 
-<body class="page-transition">
-
-<div class="bg-glow bg-glow-1"></div>
-<div class="bg-glow bg-glow-2"></div>
-
-<!-- ==========================================
-HEADER
-========================================== -->
-
-<header class="products-header fade-down">
-
-    <a href="../dashboard/customer/dashboard.html"
-       class="logo-wrapper">
-
-        <div class="logo-icon">
-
-            B
-
-        </div>
-
-        <div>
-
-            <h1 class="logo-text">
-
-                MichiePlus
-
-            </h1>
-
-            <p class="logo-subtext">
-
-                Learn • Connect • Grow
-
-            </p>
-
-        </div>
-
-    </a>
-
-    <nav class="products-nav">
-
-        <a href="/marketplace.html"
-           class="active">
-
-            Marketplace
-
-        </a>
-
-        <a href="cts.html">
-
-            Products
-
-        </a>
-
-        <a href="../dashboard/customer/learning.html">
-
-            Learning
-
-        </a>
-
-        <a href="../dashboard/customer/community.html">
-
-            Community
-
-        </a>
-
-        <a href="../dashboard/customer/inbox.html">
-
-            Inbox
-
-        </a>
-
+<header class="topbar">
+  <div class="topbar-content">
+    <a class="brand" href="{{ url_for('customer_dashboard') }}">Michie<span class="brand-accent">Plus</span></a>
+    <nav class="nav">
+      <a class="button" href="{{ url_for('customer_dashboard') }}">Dashboard</a>
+      <a class="cart-link" href="{{ url_for('view_cart') }}">
+        🛒 Cart <span id="cartCount" class="badge">0</span>
+      </a>
     </nav>
-
-    <div class="header-actions">
-
-        <button class="icon-btn">
-
-            🔍
-
-        </button>
-
-        <button class="icon-btn">
-
-            🔔
-
-        </button>
-
-        <button class="icon-btn">
-
-            👤
-
-        </button>
-
-    </div>
-
+  </div>
 </header>
 
-<main class="marketplace-main">
+<main class="shell">
+  <section class="hero">
+    <h1>Find something <span>useful.</span></h1>
+    <p>Explore approved digital products from MichiePlus vendors.</p>
+  </section>
 
-<section class="marketplace-hero fade-up">
+  <section class="filters">
+    <form method="get" action="{{ url_for('marketplace') }}">
+      <input name="q" value="{{ search|e }}" placeholder="Search products, vendors or categories..." aria-label="Search">
+      <button type="submit">Search</button>
+    </form>
 
-<div class="hero-content">
+    <div class="chips">
+      <a class="chip {% if not selected_category %}active{% endif %}" href="{{ url_for('marketplace', q=search) }}">All</a>
+      {% for category in categories %}
+        <a class="chip {% if category == selected_category %}active{% endif %}" href="{{ url_for('marketplace', q=search, category=category) }}">{{ category }}</a>
+      {% endfor %}
+    </div>
+  </section>
 
-<span class="hero-badge">
+  {% if page_error %}
+    <div class="notice">{{ page_error }} Check the Flask terminal for the full traceback.</div>
+  {% endif %}
 
-🚀 Discover. Learn. Grow.
-
-</span>
-
-<h2>
-
-Everything You Need
-to Build Your Future.
-
-</h2>
-
-<p>
-
-Explore high-quality courses, digital products,
-professional services, and trusted vendors—all in one place.
-
-</p>
-
-<div class="hero-buttons">
-
-<a href="#" class="primary-btn">
-
-Browse Courses
-
-</a>
-
-<a href="#" class="secondary-btn">
-
-Explore Products
-
-</a>
-
-</div>
-
-</div>
-
-<div class="hero-image">
-
-<div class="floating-card card-one">
-
-💻
-<p>Technology</p>
-
-</div>
-
-<div class="floating-card card-two">
-
-📈
-<p>Business</p>
-
-</div>
-
-<div class="floating-card card-three">
-
-🎨
-<p>Design</p>
-
-</div>
-
-</div>
-
-</section>
-
+  {% if products %}
+    <section class="grid" aria-label="Marketplace products">
+      {% for product in products %}
+        <article class="card">
+          <a class="card-image" href="{{ url_for('product_detail', product_id=product.id) }}">
+            {% if product.cover_image %}
+              <img src="{{ product.cover_image|e }}" alt="{{ product.title|e }}" loading="lazy">
+            {% else %}
+              <span class="placeholder">▧</span>
+            {% endif %}
+          </a>
+          <div class="body">
+            <div class="eyebrow">{{ product.category or 'Digital product' }} · {{ product.vendor_name }}</div>
+            <h2 class="title">{{ product.title }}</h2>
+            <p class="description">{{ product.description or 'A useful resource from a verified MichiePlus vendor.' }}</p>
+            <div class="meta">
+              <span class="price">₦{{ '%.2f'|format(product.price) }}</span>
+              <span>★ {{ product.rating or '0.00' }}</span>
+            </div>
+            <div class="actions">
+              <a class="view" href="{{ url_for('product_detail', product_id=product.id) }}">Details</a>
+              <button class="add" data-product-id="{{ product.id }}">Add to cart</button>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </section>
+  {% else %}
+    <div class="empty">
+      <h2>No products found</h2>
+      <p>Try another search query or category.</p>
+    </div>
+  {% endif %}
 </main>
 
-<!-- ==========================
-     Marketplace Categories
-=========================== -->
-
-<section class="marketplace-categories fade-up">
-
-    <div class="section-header">
-
-        <h2>Browse Categories</h2>
-
-        <p>
-            Discover products and courses across popular industries.
-        </p>
-
-    </div>
-
-    <div class="category-grid">
-
-        <div class="category-card">
-            <div class="category-icon">💻</div>
-            <h3>Technology</h3>
-            <p>Programming, AI, Software & IT</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">📈</div>
-            <h3>Business</h3>
-            <p>Management, Startups & Growth</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">🎨</div>
-            <h3>Design</h3>
-            <p>Graphics, UI/UX & Creativity</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">📣</div>
-            <h3>Marketing</h3>
-            <p>Digital Marketing & Branding</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">💰</div>
-            <h3>Finance</h3>
-            <p>Investing & Personal Finance</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">🚀</div>
-            <h3>Entrepreneurship</h3>
-            <p>Launch and scale businesses</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">📷</div>
-            <h3>Photography</h3>
-            <p>Photo & Video Production</p>
-        </div>
-
-        <div class="category-card">
-            <div class="category-icon">🏋️</div>
-            <h3>Health</h3>
-            <p>Fitness & Wellness</p>
-        </div>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     FEATURED COURSES
-========================================== -->
-
-<section class="featured-courses fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-                Featured Courses
-            </span>
-
-            <h2>Learn From Industry Experts</h2>
-
-        </div>
-
-        <a href="courses/all-courses.html"
-           class="view-all-btn">
-
-            View All →
-
-        </a>
-
-    </div>
-
-    <div class="course-grid">
-
-        <article class="course-card">
-
-            <div class="course-image">
-
-                <span class="course-badge">
-                    Bestseller
-                </span>
-
-            </div>
-
-            <div class="course-content">
-
-                <div class="course-meta">
-
-                    ⭐ 4.9
-
-                    <span>
-
-                        • 2,341 Students
-
-                    </span>
-
-                </div>
-
-                <h3>
-
-                    Complete Business Strategy Masterclass
-
-                </h3>
-
-                <p>
-
-                    Learn how to build, grow and scale profitable businesses.
-
-                </p>
-
-                <div class="course-footer">
-
-                    <strong>₦25,000</strong>
-
-                    <button class="course-btn">
-
-                        View Course
-
-                    </button>
-
-                </div>
-
-            </div>
-
-        </article>
-
-        <article class="course-card">
-
-            <div class="course-image image-two">
-
-                <span class="course-badge">
-
-                    New
-
-                </span>
-
-            </div>
-
-            <div class="course-content">
-
-                <div class="course-meta">
-
-                    ⭐ 4.8
-
-                    <span>
-
-                        • 1,876 Students
-
-                    </span>
-
-                </div>
-
-                <h3>
-
-                    UI/UX Design From Scratch
-
-                </h3>
-
-                <p>
-
-                    Design modern websites and mobile applications professionally.
-
-                </p>
-
-                <div class="course-footer">
-
-                    <strong>₦18,500</strong>
-
-                    <button class="course-btn">
-
-                        View Course
-
-                    </button>
-
-                </div>
-
-            </div>
-
-        </article>
-
-        <article class="course-card">
-
-            <div class="course-image image-three">
-
-                <span class="course-badge">
-
-                    Popular
-
-                </span>
-
-            </div>
-
-            <div class="course-content">
-
-                <div class="course-meta">
-
-                    ⭐ 4.7
-
-                    <span>
-
-                        • 3,140 Students
-
-                    </span>
-
-                </div>
-
-                <h3>
-
-                    Digital Marketing Blueprint
-
-                </h3>
-
-                <p>
-
-                    Master SEO, Ads, Social Media and Content Marketing.
-
-                </p>
-
-                <div class="course-footer">
-
-                    <strong>₦22,000</strong>
-
-                    <button class="course-btn">
-
-                        View Course
-
-                    </button>
-
-                </div>
-
-            </div>
-
-        </article>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     FEATURED PRODUCTS
-========================================== -->
-
-<section class="featured-products fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                Featured Products
-
-            </span>
-
-            <h2>
-
-                Discover Digital Products
-
-            </h2>
-
-        </div>
-
-        <a href="products/all-products.html"
-           class="view-all-btn">
-
-            View All →
-
-        </a>
-
-    </div>
-
-    <div class="product-grid">
-
-        <!-- Product 1 -->
-
-        <article class="product-card">
-
-            <button class="wishlist-btn">
-
-                ♡
-
-            </button>
-
-            <div class="product-image image-blue">
-
-            </div>
-
-            <div class="product-content">
-
-                <span class="vendor-name">
-
-                    by Cadmus Technologies
-
-                </span>
-
-                <h3>
-
-                    Startup Business Toolkit
-
-                </h3>
-
-                <div class="product-rating">
-
-                    ⭐ 4.9
-
-                    <span>(324 Reviews)</span>
-
-                </div>
-
-                <div class="product-footer">
-
-                    <strong>
-
-                        ₦8,500
-
-                    </strong>
-
-                    <button class="product-btn">
-
-                        Add to Cart
-
-                    </button>
-
-                </div>
-
-            </div>
-
-        </article>
-
-        <!-- Product 2 -->
-
-        <article class="product-card">
-
-            <button class="wishlist-btn">
-
-                ♡
-
-            </button>
-
-            <div class="product-image image-purple">
-
-            </div>
-
-            <div class="product-content">
-
-                <span class="vendor-name">
-
-                    by Design Studio
-
-                </span>
-
-                <h3>
-
-                    Premium UI Kit
-
-                </h3>
-
-                <div class="product-rating">
-
-                    ⭐ 4.8
-
-                    <span>(215 Reviews)</span>
-
-                </div>
-
-                <div class="product-footer">
-
-                    <strong>
-
-                        ₦12,000
-
-                    </strong>
-
-                    <button class="product-btn">
-
-                        Add to Cart
-
-                    </button>
-
-                </div>
-
-            </div>
-
-        </article>
-
-        <!-- Product 3 -->
-
-        <article class="product-card">
-
-            <button class="wishlist-btn">
-
-                ♡
-
-            </button>
-
-            <div class="product-image image-orange">
-
-            </div>
-
-            <div class="product-content">
-
-                <span class="vendor-name">
-
-                    by Growth Hub
-
-                </span>
-
-                <h3>
-
-                    Marketing Templates Bundle
-
-                </h3>
-
-                <div class="product-rating">
-
-                    ⭐ 4.7
-
-                    <span>(412 Reviews)</span>
-
-                </div>
-
-                <div class="product-footer">
-
-                    <strong>
-
-                        ₦6,500
-
-                    </strong>
-
-                    <button class="product-btn">
-
-                        Add to Cart
-
-                    </button>
-
-                </div>
-
-            </div>
-
-        </article>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     TOP VENDORS
-========================================== -->
-
-<section class="top-vendors fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                Top Vendors
-
-            </span>
-
-            <h2>
-
-                Meet Trusted Businesses
-
-            </h2>
-
-        </div>
-
-        <a href="vendors/vendor-directory.html"
-           class="view-all-btn">
-
-            View All →
-
-        </a>
-
-    </div>
-
-    <div class="vendor-grid">
-
-        <!-- Vendor 1 -->
-
-        <article class="vendor-card">
-
-            <div class="vendor-avatar">
-
-                CT
-
-            </div>
-
-            <h3>
-
-                Cadmus Technologies
-
-            </h3>
-
-            <p>
-
-                Software • Technology
-
-            </p>
-
-            <div class="vendor-stats">
-
-                ⭐ 4.9
-
-                <span>
-
-                    • 4,500 Followers
-
-                </span>
-
-            </div>
-
-            <div class="vendor-numbers">
-
-                <div>
-
-                    <strong>45</strong>
-
-                    <span>Products</span>
-
-                </div>
-
-                <div>
-
-                    <strong>18</strong>
-
-                    <span>Courses</span>
-
-                </div>
-
-            </div>
-
-            <div class="vendor-buttons">
-
-                <button class="follow-btn">
-
-                    Follow
-
-                </button>
-
-                <button class="store-btn">
-
-                    Visit Store
-
-                </button>
-
-            </div>
-
-        </article>
-
-        <!-- Vendor 2 -->
-
-        <article class="vendor-card">
-
-            <div class="vendor-avatar purple">
-
-                DS
-
-            </div>
-
-            <h3>
-
-                Design Studio
-
-            </h3>
-
-            <p>
-
-                Design • Branding
-
-            </p>
-
-            <div class="vendor-stats">
-
-                ⭐ 4.8
-
-                <span>
-
-                    • 3,100 Followers
-
-                </span>
-
-            </div>
-
-            <div class="vendor-numbers">
-
-                <div>
-
-                    <strong>62</strong>
-
-                    <span>Products</span>
-
-                </div>
-
-                <div>
-
-                    <strong>9</strong>
-
-                    <span>Courses</span>
-
-                </div>
-
-            </div>
-
-            <div class="vendor-buttons">
-
-                <button class="follow-btn">
-
-                    Follow
-
-                </button>
-
-                <button class="store-btn">
-
-                    Visit Store
-
-                </button>
-
-            </div>
-
-        </article>
-
-        <!-- Vendor 3 -->
-
-        <article class="vendor-card">
-
-            <div class="vendor-avatar orange">
-
-                GH
-
-            </div>
-
-            <h3>
-
-                Growth Hub
-
-            </h3>
-
-            <p>
-
-                Marketing • Business
-
-            </p>
-
-            <div class="vendor-stats">
-
-                ⭐ 4.9
-
-                <span>
-
-                    • 6,200 Followers
-
-                </span>
-
-            </div>
-
-            <div class="vendor-numbers">
-
-                <div>
-
-                    <strong>37</strong>
-
-                    <span>Products</span>
-
-                </div>
-
-                <div>
-
-                    <strong>22</strong>
-
-                    <span>Courses</span>
-
-                </div>
-
-            </div>
-
-            <div class="vendor-buttons">
-
-                <button class="follow-btn">
-
-                    Follow
-
-                </button>
-
-                <button class="store-btn">
-
-                    Visit Store
-
-                </button>
-
-            </div>
-
-        </article>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     RECOMMENDED FOR YOU
-========================================== -->
-
-<section class="recommended-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                Personalized Picks
-
-            </span>
-
-            <h2>
-
-                Recommended For You
-
-            </h2>
-
-        </div>
-
-        <a href="courses/all-courses.html"
-           class="view-all-btn">
-
-            Explore More →
-
-        </a>
-
-    </div>
-
-    <div class="recommended-grid">
-
-        <article class="recommend-card">
-
-            <span class="recommend-badge">
-
-                Based on your interests
-
-            </span>
-
-            <h3>
-
-                Startup Funding Masterclass
-
-            </h3>
-
-            <p>
-
-                Learn how successful startups raise capital and attract investors.
-
-            </p>
-
-            <div class="recommend-footer">
-
-                <span>
-
-                    ⭐ 4.9
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    View Course
-
-                </button>
-
-            </div>
-
-        </article>
-
-        <article class="recommend-card">
-
-            <span class="recommend-badge">
-
-                Popular in Technology
-
-            </span>
-
-            <h3>
-
-                UI Design Toolkit
-
-            </h3>
-
-            <p>
-
-                Premium design resources trusted by thousands of creators.
-
-            </p>
-
-            <div class="recommend-footer">
-
-                <span>
-
-                    ⭐ 4.8
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    View Product
-
-                </button>
-
-            </div>
-
-        </article>
-
-        <article class="recommend-card">
-
-            <span class="recommend-badge">
-
-                Trending Today
-
-            </span>
-
-            <h3>
-
-                Digital Marketing Bootcamp
-
-            </h3>
-
-            <p>
-
-                Build complete marketing skills from beginner to advanced.
-
-            </p>
-
-            <div class="recommend-footer">
-
-                <span>
-
-                    ⭐ 5.0
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    View Course
-
-                </button>
-
-            </div>
-
-        </article>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     TRENDING NOW
-========================================== -->
-
-<section class="trending-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                🔥 Popular Right Now
-
-            </span>
-
-            <h2>
-
-                Trending on MichiePlus
-
-            </h2>
-
-        </div>
-
-        <a href="#" class="view-all-btn">
-
-            View All →
-
-        </a>
-
-    </div>
-
-    <div class="trending-list">
-
-        <article class="trend-item">
-
-            <div class="trend-rank">
-
-                #1
-
-            </div>
-
-            <div class="trend-info">
-
-                <h3>
-
-                    AI for Business Owners
-
-                </h3>
-
-                <p>
-
-                    Course • 1,248 students enrolled this week
-
-                </p>
-
-            </div>
-
-            <button class="outline-small-btn">
-
-                View
-
-            </button>
-
-        </article>
-
-        <article class="trend-item">
-
-            <div class="trend-rank">
-
-                #2
-
-            </div>
-
-            <div class="trend-info">
-
-                <h3>
-
-                    Complete Brand Identity Kit
-
-                </h3>
-
-                <p>
-
-                    Product • Best Seller
-
-                </p>
-
-            </div>
-
-            <button class="outline-small-btn">
-
-                View
-
-            </button>
-
-        </article>
-
-        <article class="trend-item">
-
-            <div class="trend-rank">
-
-                #3
-
-            </div>
-
-            <div class="trend-info">
-
-                <h3>
-
-                    Social Media Marketing Bootcamp
-
-                </h3>
-
-                <p>
-
-                    Course • Trending in Marketing
-
-                </p>
-
-            </div>
-
-            <button class="outline-small-btn">
-
-                View
-
-            </button>
-
-        </article>
-
-        <article class="trend-item">
-
-            <div class="trend-rank">
-
-                #4
-
-            </div>
-
-            <div class="trend-info">
-
-                <h3>
-
-                    Business Startup Templates
-
-                </h3>
-
-                <p>
-
-                    Product • Fastest Growing Collection
-
-                </p>
-
-            </div>
-
-            <button class="outline-small-btn">
-
-                View
-
-            </button>
-
-        </article>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     RECENTLY VIEWED
-========================================== -->
-
-<section class="recent-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                🕒 Continue Exploring
-
-            </span>
-
-            <h2>
-
-                Recently Viewed
-
-            </h2>
-
-        </div>
-
-        <a href="#" class="view-all-btn">
-
-            Clear History
-
-        </a>
-
-    </div>
-
-    <div class="recent-grid">
-
-        <div class="recent-card">
-
-            <img
-            src="../../assets/images/placeholders/course.jpg"
-            alt="Course">
-
-            <div class="recent-content">
-
-                <span class="recent-type">
-
-                    Course
-
-                </span>
-
-                <h3>
-
-                    Advanced Excel for Business
-
-                </h3>
-
-                <p>
-
-                    Viewed 15 minutes ago
-
-                </p>
-
-                <button class="primary-small-btn">
-
-                    Continue
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="recent-card">
-
-            <img
-            src="../../assets/images/placeholders/product.jpg"
-            alt="Product">
-
-            <div class="recent-content">
-
-                <span class="recent-type">
-
-                    Product
-
-                </span>
-
-                <h3>
-
-                    Business Proposal Template
-
-                </h3>
-
-                <p>
-
-                    Viewed Yesterday
-
-                </p>
-
-                <button class="primary-small-btn">
-
-                    View Again
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="recent-card">
-
-            <img
-            src="../../assets/images/placeholders/vendor.jpg"
-            alt="Vendor">
-
-            <div class="recent-content">
-
-                <span class="recent-type">
-
-                    Vendor
-
-                </span>
-
-                <h3>
-
-                    TechHub Solutions
-
-                </h3>
-
-                <p>
-
-                    Viewed 3 days ago
-
-                </p>
-
-                <button class="primary-small-btn">
-
-                    Visit Store
-
-                </button>
-
-            </div>
-
-        </div>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     LEARNING PATHS
-========================================== -->
-
-<section class="paths-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                🎯 Curated For Success
-
-            </span>
-
-            <h2>
-
-                Learning Paths
-
-            </h2>
-
-        </div>
-
-        <a href="#" class="view-all-btn">
-
-            View All
-
-        </a>
-
-    </div>
-
-    <div class="paths-grid">
-
-        <div class="path-card">
-
-            <div class="path-icon">
-
-                💻
-
-            </div>
-
-            <h3>
-
-                Become a Full Stack Developer
-
-            </h3>
-
-            <p>
-
-                12 Courses • Beginner → Advanced
-
-            </p>
-
-            <div class="path-footer">
-
-                <span>
-
-                    6 Months
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    Explore
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="path-card">
-
-            <div class="path-icon">
-
-                🚀
-
-            </div>
-
-            <h3>
-
-                Launch Your Business
-
-            </h3>
-
-            <p>
-
-                8 Courses • Startup Essentials
-
-            </p>
-
-            <div class="path-footer">
-
-                <span>
-
-                    4 Months
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    Explore
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="path-card">
-
-            <div class="path-icon">
-
-                📈
-
-            </div>
-
-            <h3>
-
-                Master Digital Marketing
-
-            </h3>
-
-            <p>
-
-                10 Courses • SEO, Ads & Social Media
-
-            </p>
-
-            <div class="path-footer">
-
-                <span>
-
-                    5 Months
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    Explore
-
-                </button>
-
-            </div>
-
-        </div>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     POPULAR COLLECTIONS
-========================================== -->
-
-<section class="collections-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                ⭐ Editor's Picks
-
-            </span>
-
-            <h2>
-
-                Popular Collections
-
-            </h2>
-
-        </div>
-
-        <a href="#" class="view-all-btn">
-
-            View All
-
-        </a>
-
-    </div>
-
-    <div class="collections-grid">
-
-        <div class="collection-card">
-
-            <div class="collection-image">
-
-                🤖
-
-            </div>
-
-            <div class="collection-content">
-
-                <h3>
-
-                    AI Essentials
-
-                </h3>
-
-                <p>
-
-                    8 Courses • 14 Products
-
-                </p>
-
-                <button class="primary-small-btn">
-
-                    Explore Collection
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="collection-card">
-
-            <div class="collection-image">
-
-                💼
-
-            </div>
-
-            <div class="collection-content">
-
-                <h3>
-
-                    Small Business Starter Kit
-
-                </h3>
-
-                <p>
-
-                    5 Courses • 20 Products
-
-                </p>
-
-                <button class="primary-small-btn">
-
-                    Explore Collection
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="collection-card">
-
-            <div class="collection-image">
-
-                🎨
-
-            </div>
-
-            <div class="collection-content">
-
-                <h3>
-
-                    Creative Designer Bundle
-
-                </h3>
-
-                <p>
-
-                    10 Courses • 12 Products
-
-                </p>
-
-                <button class="primary-small-btn">
-
-                    Explore Collection
-
-                </button>
-
-            </div>
-
-        </div>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     FEATURED EVENTS
-========================================== -->
-
-<section class="events-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                🎤 Live Experiences
-
-            </span>
-
-            <h2>
-
-                Upcoming Events & Webinars
-
-            </h2>
-
-        </div>
-
-        <a href="#" class="view-all-btn">
-
-            View All
-
-        </a>
-
-    </div>
-
-    <div class="events-grid">
-
-        <div class="event-card">
-
-            <div class="event-date">
-
-                <span class="month">
-
-                    JUL
-
-                </span>
-
-                <span class="day">
-
-                    12
-
-                </span>
-
-            </div>
-
-            <div class="event-content">
-
-                <h3>
-
-                    Startup Funding Masterclass
-
-                </h3>
-
-                <p>
-
-                    Learn how to raise funding from investors.
-
-                </p>
-
-                <div class="event-meta">
-
-                    <span>⏰ 7:00 PM</span>
-
-                    <span>👤 Alex Morgan</span>
-
-                </div>
-
-            </div>
-
-            <button class="primary-small-btn">
-
-                Register
-
-            </button>
-
-        </div>
-
-        <div class="event-card">
-
-            <div class="event-date">
-
-                <span class="month">
-
-                    JUL
-
-                </span>
-
-                <span class="day">
-
-                    18
-
-                </span>
-
-            </div>
-
-            <div class="event-content">
-
-                <h3>
-
-                    Building Your Online Brand
-
-                </h3>
-
-                <p>
-
-                    Discover how to grow your digital presence.
-
-                </p>
-
-                <div class="event-meta">
-
-                    <span>⏰ 5:30 PM</span>
-
-                    <span>👤 Sarah Johnson</span>
-
-                </div>
-
-            </div>
-
-            <button class="primary-small-btn">
-
-                Register
-
-            </button>
-
-        </div>
-
-        <div class="event-card">
-
-            <div class="event-date">
-
-                <span class="month">
-
-                    JUL
-
-                </span>
-
-                <span class="day">
-
-                    25
-
-                </span>
-
-            </div>
-
-            <div class="event-content">
-
-                <h3>
-
-                    Tech Careers in 2026
-
-                </h3>
-
-                <p>
-
-                    Explore the most in-demand tech careers.
-
-                </p>
-
-                <div class="event-meta">
-
-                    <span>⏰ 6:00 PM</span>
-
-                    <span>👤 TechHub Academy</span>
-
-                </div>
-
-            </div>
-
-            <button class="primary-small-btn">
-
-                Register
-
-            </button>
-
-        </div>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     COMMUNITY SPOTLIGHT
-========================================== -->
-
-<section class="community-section fade-up">
-
-    <div class="section-title">
-
-        <div>
-
-            <span class="section-tag">
-
-                👥 Community
-
-            </span>
-
-            <h2>
-
-                Join the Conversation
-
-            </h2>
-
-        </div>
-
-        <a href="#" class="view-all-btn">
-
-            Explore Community
-
-        </a>
-
-    </div>
-
-    <div class="community-grid">
-
-        <div class="community-card">
-
-            <div class="community-icon">
-
-                🚀
-
-            </div>
-
-            <h3>
-
-                Startup Founders
-
-            </h3>
-
-            <p>
-
-                Discuss funding, scaling, product launches and entrepreneurship.
-
-            </p>
-
-            <div class="community-footer">
-
-                <span>
-
-                    👥 8,421 Members
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    Join
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="community-card">
-
-            <div class="community-icon">
-
-                💻
-
-            </div>
-
-            <h3>
-
-                Tech Professionals
-
-            </h3>
-
-            <p>
-
-                Programming, AI, cybersecurity and software engineering.
-
-            </p>
-
-            <div class="community-footer">
-
-                <span>
-
-                    👥 12,364 Members
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    Join
-
-                </button>
-
-            </div>
-
-        </div>
-
-        <div class="community-card">
-
-            <div class="community-icon">
-
-                📈
-
-            </div>
-
-            <h3>
-
-                Digital Marketing
-
-            </h3>
-
-            <p>
-
-                SEO, branding, advertising and business growth discussions.
-
-            </p>
-
-            <div class="community-footer">
-
-                <span>
-
-                    👥 5,908 Members
-
-                </span>
-
-                <button class="primary-small-btn">
-
-                    Join
-
-                </button>
-
-            </div>
-
-        </div>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     NEWSLETTER CTA
-========================================== -->
-
-<section class="newsletter-section fade-up">
-
-    <div class="newsletter-content">
-
-        <span class="section-tag">
-
-            🚀 Stay Updated
-
-        </span>
-
-        <h2>
-
-            Never Miss New Courses,
-            Products & Events
-
-        </h2>
-
-        <p>
-
-            Join thousands of entrepreneurs, learners and professionals
-            receiving weekly updates from MichiePlus.
-
-        </p>
-
-        <form class="newsletter-form">
-
-            <input
-                type="email"
-                placeholder="Enter your email address"
-                required>
-
-            <button
-                type="submit"
-                class="primary-btn">
-
-                Subscribe
-
-            </button>
-
-        </form>
-
-    </div>
-
-</section>
-
-<!-- ==========================================
-     FOOTER
-========================================== -->
-
-<footer class="marketplace-footer">
-
-    <div class="footer-grid">
-
-        <div>
-
-            <div class="footer-logo">
-
-                <div class="logo-icon">
-
-                    B
-
-                </div>
-
-                <div>
-
-                    <h3>MichiePlus</h3>
-
-                    <p>Learn • Connect • Grow</p>
-
-                </div>
-
-            </div>
-
-            <p class="footer-description">
-
-                Africa's modern marketplace for learning, business,
-                networking and digital growth.
-
-            </p>
-
-        </div>
-
-        <div>
-
-            <h4>Marketplace</h4>
-
-            <ul>
-
-                <li><a href="#">Courses</a></li>
-
-                <li><a href="#">Products</a></li>
-
-                <li><a href="#">Vendors</a></li>
-
-                <li><a href="#">Categories</a></li>
-
-            </ul>
-
-        </div>
-
-        <div>
-
-            <h4>Community</h4>
-
-            <ul>
-
-                <li><a href="#">Groups</a></li>
-
-                <li><a href="#">Events</a></li>
-
-                <li><a href="#">Discussions</a></li>
-
-                <li><a href="#">Support</a></li>
-
-            </ul>
-
-        </div>
-
-        <div>
-
-            <h4>Company</h4>
-
-            <ul>
-
-                <li><a href="#">About</a></li>
-
-                <li><a href="#">Careers</a></li>
-
-                <li><a href="#">Privacy</a></li>
-
-                <li><a href="#">Terms</a></li>
-
-            </ul>
-
-        </div>
-
-    </div>
-
-    <div class="footer-bottom">
-
-        <p>
-
-            © 2026 MichiePlus. All rights reserved.
-
-        </p>
-
-        <div class="footer-socials">
-
-            <a href="#">Facebook</a>
-
-            <a href="#">Instagram</a>
-
-            <a href="#">LinkedIn</a>
-
-            <a href="#">X</a>
-
-        </div>
-
-    </div>
-
-</footer>
-
-</main>
-
-<script src="../../assets/js/transitions.js"></script>
-<script src="../../assets/js/marketplace.js"></script>
-
+<script src="{{ url_for('static', filename='js/cart.js') }}"></script>
+<script>
+  document.querySelectorAll('[data-product-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      MichiePlusCart.addToCart(Number(button.dataset.productId), { itemType: 'product', quantity: 1, button });
+    });
+  });
+  MichiePlusCart.refreshCartBadge();
+</script>
 </body>
-
 </html>

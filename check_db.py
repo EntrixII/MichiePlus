@@ -1,13 +1,27 @@
-import psycopg2
-import psycopg2.extras
-from psycopg2 import pool as pg_pool
+import os
+import pymysql
+import pymysql.cursors
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", 3306))
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "michieplus")
+
 
 def get_db_connection(timeout=15):
     """Create a database connection with optional timeout."""
-    conn = psycopg2.connect(
-        DATABASE_URL,
+    conn = pymysql.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
         connect_timeout=timeout,
-        cursor_factory=psycopg2.extras.RealDictCursor
+        cursorclass=pymysql.cursors.DictCursor
     )
     return conn
 
@@ -15,7 +29,7 @@ def get_db_connection(timeout=15):
 conn = get_db_connection()
 cur = conn.cursor()
 
-cur.execute("SELECT version();")
+cur.execute("SELECT VERSION();")
 print(cur.fetchone())
 
 cur.close()

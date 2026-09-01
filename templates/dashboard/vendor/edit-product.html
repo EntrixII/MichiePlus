@@ -14,7 +14,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/transitions.css') }}">
 
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
             font-family: 'Inter', sans-serif;
@@ -181,6 +185,7 @@
                 opacity: 0;
                 transform: translateY(-10px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -337,7 +342,6 @@
             color: #0000c1;
             font-weight: 600;
             font-size: 14px;
-            display: flex;
             align-items: center;
             gap: 8px;
         }
@@ -545,12 +549,18 @@
         .flash-message .icon {
             width: 20px;
             height: 20px;
-            flex-shrink: 0;
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* ===== RESPONSIVE ===== */
@@ -583,14 +593,19 @@
         }
     </style>
 </head>
+
 <body>
 
     <div class="container page-transition">
+
         <div class="header">
             <h1>
-                <i data-lucide="pen-tool" class="icon" style="width: 32px; height: 32px; color: #0000c1;"></i>
+                <i data-lucide="pen-tool"
+                   class="icon"
+                   style="width: 32px; height: 32px; color: #0000c1;"></i>
                 Edit <span>Product</span>
             </h1>
+
             <a href="{{ url_for('vendor_products') }}">
                 <i data-lucide="arrow-left" class="icon"></i>
                 Back to Products
@@ -603,7 +618,8 @@
                 <div class="flash-messages">
                     {% for category, message in messages %}
                         <div class="flash-message flash-{{ category }}">
-                            <i data-lucide="{% if category == 'success' %}check-circle{% else %}alert-circle{% endif %}" class="icon"></i>
+                            <i data-lucide="{% if category == 'success' %}check-circle{% else %}alert-circle{% endif %}"
+                               class="icon"></i>
                             {{ message }}
                         </div>
                     {% endfor %}
@@ -612,306 +628,727 @@
         {% endwith %}
 
         <div class="edit-card">
+
             <h2>
-                <i data-lucide="edit-3" class="icon" style="width: 24px; height: 24px; color: #0000c1;"></i>
+                <i data-lucide="edit-3"
+                   class="icon"
+                   style="width: 24px; height: 24px; color: #0000c1;"></i>
                 Product Details
             </h2>
-            <p class="subtitle">Update your product information below.</p>
-            <span class="product-id">Product #{{ product.id }}</span>
+
+            <p class="subtitle">
+                Update your product information below.
+            </p>
+
+            <span class="product-id">
+                Product #{{ product.id }}
+            </span>
 
             <form id="editForm" method="POST" enctype="multipart/form-data">
+
                 <div class="form-group">
-                    <label>Product Title <span class="required">*</span></label>
-                    <input type="text" name="title" value="{{ product.title }}" placeholder="e.g. Complete Python Handbook" required>
+                    <label>
+                        Product Title <span class="required">*</span>
+                    </label>
+
+                    <input type="text"
+                           name="title"
+                           value="{{ product.title }}"
+                           placeholder="e.g. Complete Python Handbook"
+                           required>
                 </div>
 
                 <div class="form-row">
+
                     <div class="form-group">
-                        <label>Category <span class="required">*</span></label>
+                        <label>
+                            Category <span class="required">*</span>
+                        </label>
+
                         <select name="category" required>
                             <option value="">Select Category</option>
-                            <option value="E-books" {% if product.category == 'E-books' %}selected{% endif %}>E-books</option>
-                            <option value="Templates" {% if product.category == 'Templates' %}selected{% endif %}>Templates</option>
-                            <option value="Software" {% if product.category == 'Software' %}selected{% endif %}>Software</option>
-                            <option value="Courses" {% if product.category == 'Courses' %}selected{% endif %}>Courses</option>
-                            <option value="Design Assets" {% if product.category == 'Design Assets' %}selected{% endif %}>Design Assets</option>
-                            <option value="Music & Audio" {% if product.category == 'Music & Audio' %}selected{% endif %}>Music & Audio</option>
-                            <option value="Licenses" {% if product.category == 'Licenses' %}selected{% endif %}>Licenses</option>
-                            <option value="Other" {% if product.category == 'Other' %}selected{% endif %}>Other</option>
+
+                            <option value="E-books"
+                                {% if product.category == 'E-books' %}selected{% endif %}>
+                                E-books
+                            </option>
+
+                            <option value="Templates"
+                                {% if product.category == 'Templates' %}selected{% endif %}>
+                                Templates
+                            </option>
+
+                            <option value="Software"
+                                {% if product.category == 'Software' %}selected{% endif %}>
+                                Software
+                            </option>
+
+                            <option value="Courses"
+                                {% if product.category == 'Courses' %}selected{% endif %}>
+                                Courses
+                            </option>
+
+                            <option value="Design Assets"
+                                {% if product.category == 'Design Assets' %}selected{% endif %}>
+                                Design Assets
+                            </option>
+
+                            <option value="Music & Audio"
+                                {% if product.category == 'Music & Audio' %}selected{% endif %}>
+                                Music & Audio
+                            </option>
+
+                            <option value="Licenses"
+                                {% if product.category == 'Licenses' %}selected{% endif %}>
+                                Licenses
+                            </option>
+
+                            <option value="Other"
+                                {% if product.category == 'Other' %}selected{% endif %}>
+                                Other
+                            </option>
                         </select>
                     </div>
 
                     <div class="form-group">
-                        <label>Product Type <span class="required">*</span></label>
+                        <label>
+                            Product Type <span class="required">*</span>
+                        </label>
+
                         <select name="product_type" required>
                             <option value="">Select Type</option>
-                            <option value="ebook" {% if product.product_type == 'ebook' %}selected{% endif %}>E-book</option>
-                            <option value="template" {% if product.product_type == 'template' %}selected{% endif %}>Template</option>
-                            <option value="software" {% if product.product_type == 'software' %}selected{% endif %}>Software</option>
-                            <option value="course" {% if product.product_type == 'course' %}selected{% endif %}>Course</option>
-                            <option value="design" {% if product.product_type == 'design' %}selected{% endif %}>Design Asset</option>
-                            <option value="audio" {% if product.product_type == 'audio' %}selected{% endif %}>Music/Audio</option>
-                            <option value="license" {% if product.product_type == 'license' %}selected{% endif %}>License/Key</option>
-                            <option value="other" {% if product.product_type == 'other' %}selected{% endif %}>Other</option>
+
+                            <option value="ebook"
+                                {% if product.product_type == 'ebook' %}selected{% endif %}>
+                                E-book
+                            </option>
+
+                            <option value="template"
+                                {% if product.product_type == 'template' %}selected{% endif %}>
+                                Template
+                            </option>
+
+                            <option value="software"
+                                {% if product.product_type == 'software' %}selected{% endif %}>
+                                Software
+                            </option>
+
+                            <option value="course"
+                                {% if product.product_type == 'course' %}selected{% endif %}>
+                                Course
+                            </option>
+
+                            <option value="design"
+                                {% if product.product_type == 'design' %}selected{% endif %}>
+                                Design Asset
+                            </option>
+
+                            <option value="audio"
+                                {% if product.product_type == 'audio' %}selected{% endif %}>
+                                Music/Audio
+                            </option>
+
+                            <option value="license"
+                                {% if product.product_type == 'license' %}selected{% endif %}>
+                                License/Key
+                            </option>
+
+                            <option value="other"
+                                {% if product.product_type == 'other' %}selected{% endif %}>
+                                Other
+                            </option>
                         </select>
                     </div>
+
                 </div>
 
+                <!-- PRICE -->
                 <div class="form-group">
-                    <label>Price (₦) <span class="required">*</span></label>
-                    <input type="number" name="price" id="priceInput" value="{{ product.price }}" placeholder="0.00" step="0.01" min="0.01" required>
-                    <div class="helper-text">You will receive 70% of each sale. MichiePlus retains 30%.</div>
-                    
+
+                    <label>
+                        Price (₦) <span class="required">*</span>
+                    </label>
+
+                    <input type="number"
+                           name="price"
+                           id="priceInput"
+                           value="{{ product.price }}"
+                           placeholder="0.00"
+                           step="0.01"
+                           min="0.01"
+                           required>
+
+                    <div class="helper-text">
+                        You will receive 70% of each sale. MichiePlus retains 30%.
+                    </div>
+
                     <!-- Price Calculator -->
                     <div class="price-calculator" id="priceCalculator">
+
                         <div class="calc-row">
                             <span class="label">Your Price</span>
-                            <span class="value">₦<span id="displayPrice">{{ product.price }}</span></span>
+
+                            <span class="value">
+                                ₦<span id="displayPrice">{{ product.price }}</span>
+                            </span>
                         </div>
+
                         <div class="calc-row">
                             <span class="label">MichiePlus Fee (30%)</span>
-                            <span class="value MichiePlus-fee">-₦<span id="MichiePlusFee">{{ (product.price * 0.30)|round(2) }}</span></span>
+
+                            <span class="value MichiePlus-fee">
+                                -₦<span id="MichiePlusFee">0.00</span>
+                            </span>
                         </div>
+
                         <hr class="calc-divider">
+
                         <div class="calc-total">
                             <span>Your Profit (70%)</span>
-                            <span class="your-profit">₦<span id="yourProfit">{{ (product.price * 0.70)|round(2) }}</span></span>
+
+                            <span class="your-profit">
+                                ₦<span id="yourProfit">0.00</span>
+                            </span>
                         </div>
+
                     </div>
                 </div>
 
+                <!-- DESCRIPTION -->
                 <div class="form-group">
-                    <label>Description <span class="required">*</span></label>
-                    <textarea name="description" placeholder="Describe your product in detail..." required>{{ product.description }}</textarea>
+
+                    <label>
+                        Description <span class="required">*</span>
+                    </label>
+
+                    <textarea name="description"
+                              placeholder="Describe your product in detail..."
+                              required>{{ product.description }}</textarea>
+
                 </div>
 
+                <!-- TAGS -->
                 <div class="form-group">
-                    <label>Tags (comma separated)</label>
-                    <input type="text" name="tags" value="{{ product.tags }}" placeholder="e.g. python, programming, ebook, beginner">
+
+                    <label>
+                        Tags (comma separated)
+                    </label>
+
+                    <input type="text"
+                           name="tags"
+                           value="{{ product.tags }}"
+                           placeholder="e.g. python, programming, ebook, beginner">
+
                 </div>
 
-                <!-- Current Files -->
+                <!-- CURRENT FILES -->
                 {% if product.file_url or product.cover_image %}
+
                 <div class="current-files">
-                    <p style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: #111827;">Current Files</p>
-                    
+
+                    <p style="font-weight: 600;
+                              font-size: 14px;
+                              margin-bottom: 8px;
+                              color: #111827;">
+                        Current Files
+                    </p>
+
                     {% if product.file_url %}
+
                     <div class="file-item">
+
                         <i data-lucide="file" class="icon"></i>
+
                         <div>
-                            <div class="file-name">{{ product.file_url.split('/')[-1] }}</div>
-                            <div class="file-label">Product File</div>
+                            <div class="file-name">
+                                {{ product.file_url.split('/')[-1] }}
+                            </div>
+
+                            <div class="file-label">
+                                Product File
+                            </div>
                         </div>
+
                     </div>
+
                     {% endif %}
 
                     {% if product.cover_image %}
+
                     <div class="file-item">
+
                         <i data-lucide="image" class="icon"></i>
+
                         <div>
-                            <div class="file-name">{{ product.cover_image.split('/')[-1] }}</div>
-                            <div class="file-label">Cover Image</div>
+                            <div class="file-name">
+                                {{ product.cover_image.split('/')[-1] }}
+                            </div>
+
+                            <div class="file-label">
+                                Cover Image
+                            </div>
                         </div>
+
                     </div>
+
                     {% endif %}
+
                 </div>
+
                 {% endif %}
 
-                <!-- New Product File -->
+                <!-- NEW PRODUCT FILE -->
                 <div class="form-group">
-                    <label>Replace Product File (Optional)</label>
+
+                    <label>
+                        Replace Product File (Optional)
+                    </label>
+
                     <div class="file-upload-area" id="fileDropZone">
+
                         <i data-lucide="upload-cloud" class="icon"></i>
-                        <h4>Upload New Product File</h4>
-                        <p>Drag & drop or click to upload</p>
-                        <p style="font-size: 12px; color: #9ca3af; margin-top: 4px;">Max 50MB • PDF, EPUB, DOC, ZIP, MP3, MP4, etc.</p>
-                        <input type="file" name="file" id="fileInput">
+
+                        <h4>
+                            Upload New Product File
+                        </h4>
+
+                        <p>
+                            Drag & drop or click to upload
+                        </p>
+
+                        <p style="font-size: 12px;
+                                  color: #9ca3af;
+                                  margin-top: 4px;">
+                            Max 50MB • PDF, EPUB, DOC, ZIP, MP3, MP4, etc.
+                        </p>
+
+                        <input type="file"
+                               name="file"
+                               id="fileInput">
+
                     </div>
+
                     <div class="file-name" id="fileName">
-                        <i data-lucide="file" class="icon" style="width: 18px; height: 18px;"></i>
+
+                        <i data-lucide="file"
+                           class="icon"
+                           style="width: 18px; height: 18px;"></i>
+
                         <span id="fileNameText"></span>
+
                     </div>
+
                 </div>
 
-                <!-- New Cover Image -->
+                <!-- NEW COVER IMAGE -->
                 <div class="form-group">
-                    <label>Replace Cover Image (Optional)</label>
+
+                    <label>
+                        Replace Cover Image (Optional)
+                    </label>
+
                     <div class="file-upload-area" id="coverDropZone">
+
                         <i data-lucide="image" class="icon"></i>
-                        <h4>Upload New Cover Image</h4>
-                        <p>Drag & drop or click to upload</p>
-                        <p style="font-size: 12px; color: #9ca3af; margin-top: 4px;">PNG, JPG, JPEG, WEBP • Max 5MB</p>
-                        <input type="file" name="cover_image" id="coverInput" accept="image/*">
+
+                        <h4>
+                            Upload New Cover Image
+                        </h4>
+
+                        <p>
+                            Drag & drop or click to upload
+                        </p>
+
+                        <p style="font-size: 12px;
+                                  color: #9ca3af;
+                                  margin-top: 4px;">
+                            PNG, JPG, JPEG, WEBP • Max 5MB
+                        </p>
+
+                        <input type="file"
+                               name="cover_image"
+                               id="coverInput"
+                               accept="image/*">
+
                     </div>
+
                     <div class="file-name" id="coverName">
-                        <i data-lucide="image" class="icon" style="width: 18px; height: 18px;"></i>
+
+                        <i data-lucide="image"
+                           class="icon"
+                           style="width: 18px; height: 18px;"></i>
+
                         <span id="coverNameText"></span>
+
                     </div>
+
                 </div>
 
-                <!-- Status -->
+                <!-- STATUS -->
                 <div class="form-group">
-                    <label>Product Status</label>
+
+                    <label>
+                        Product Status
+                    </label>
+
                     <div class="status-group">
+
                         <label class="toggle-switch">
-                            <input type="checkbox" name="is_active" {% if product.is_active %}checked{% endif %}>
+
+                            <input type="checkbox"
+                                   name="is_active"
+                                   {% if product.is_active %}checked{% endif %}>
+
                             <span class="toggle-slider"></span>
+
                         </label>
+
                         <span class="status-label">
-                            <span class="{% if product.is_active %}active-text{% else %}inactive-text{% endif %}" id="statusText">
-                                {% if product.is_active %}Active{% else %}Inactive{% endif %}
+
+                            <span class="{% if product.is_active %}active-text{% else %}inactive-text{% endif %}"
+                                  id="statusText">
+
+                                {% if product.is_active %}
+                                    Active
+                                {% else %}
+                                    Inactive
+                                {% endif %}
+
                             </span>
+
                         </span>
+
                     </div>
-                    <div class="helper-text">Toggle to make this product visible or hidden on the marketplace.</div>
+
+                    <div class="helper-text">
+                        Toggle to make this product visible or hidden on the marketplace.
+                    </div>
+
                 </div>
 
-                <!-- Buttons -->
+                <!-- BUTTONS -->
                 <div class="btn-group">
-                    <a href="{{ url_for('vendor_products') }}" class="btn-secondary">
+
+                    <a href="{{ url_for('vendor_products') }}"
+                       class="btn-secondary">
+
                         <i data-lucide="x" class="icon"></i>
                         Cancel
+
                     </a>
-                    <button type="submit" class="btn-primary" id="submitBtn">
+
+                    <button type="submit"
+                            class="btn-primary"
+                            id="submitBtn">
+
                         <i data-lucide="check" class="icon"></i>
                         Save Changes
+
                     </button>
+
                 </div>
 
-                <!-- Delete Button -->
-                <form action="{{ url_for('vendor_delete_product', product_id=product.id) }}" 
-                      method="POST" 
-                      onsubmit="return confirm('Are you sure you want to delete this product? This action cannot be undone.');">
-                    <button type="submit" class="btn-danger">
-                        <i data-lucide="trash-2" class="icon"></i>
-                        Delete Product
-                    </button>
-                </form>
             </form>
+
+            <!-- DELETE FORM -->
+            <form action="{{ url_for('vendor_delete_product', product_id=product.id) }}"
+                  method="POST"
+                  onsubmit="return confirm('Are you sure you want to delete this product? This action cannot be undone.');">
+
+                <button type="submit"
+                        class="btn-danger">
+
+                    <i data-lucide="trash-2" class="icon"></i>
+                    Delete Product
+
+                </button>
+
+            </form>
+
         </div>
     </div>
 
     <script>
+
         lucide.createIcons();
 
-        // ===== PRICE CALCULATOR =====
+
+        // ============================================================
+        // PRICE CALCULATOR
+        // ============================================================
+
         const priceInput = document.getElementById('priceInput');
         const priceCalculator = document.getElementById('priceCalculator');
         const displayPrice = document.getElementById('displayPrice');
         const MichiePlusFee = document.getElementById('MichiePlusFee');
         const yourProfit = document.getElementById('yourProfit');
 
+
         function calculateProfit() {
+
             const price = parseFloat(priceInput.value) || 0;
-            
+
             if (price > 0) {
+
                 priceCalculator.classList.add('visible');
-                
+
+                // MichiePlus takes 30%
                 const fee = price * 0.30;
+
+                // Vendor receives 70%
                 const profit = price * 0.70;
-                
+
                 displayPrice.textContent = price.toFixed(2);
                 MichiePlusFee.textContent = fee.toFixed(2);
                 yourProfit.textContent = profit.toFixed(2);
+
             } else {
+
                 priceCalculator.classList.remove('visible');
+
             }
         }
 
-        // Show calculator on load if price exists
+
+        // Show calculator on page load if product already has a price
         if (priceInput.value && parseFloat(priceInput.value) > 0) {
             calculateProfit();
         }
 
+
+        // Recalculate whenever price changes
         priceInput.addEventListener('input', calculateProfit);
 
-        // ===== STATUS TOGGLE TEXT =====
-        const toggleCheckbox = document.querySelector('.toggle-switch input');
-        const statusText = document.getElementById('statusText');
+
+        // ============================================================
+        // STATUS TOGGLE TEXT
+        // ============================================================
+
+        const toggleCheckbox =
+            document.querySelector('.toggle-switch input');
+
+        const statusText =
+            document.getElementById('statusText');
+
 
         toggleCheckbox.addEventListener('change', function() {
+
             if (this.checked) {
+
                 statusText.textContent = 'Active';
                 statusText.className = 'active-text';
+
             } else {
+
                 statusText.textContent = 'Inactive';
                 statusText.className = 'inactive-text';
+
             }
+
         });
 
-        // ===== FILE UPLOAD HANDLING =====
-        function handleFileInput(inputId, nameId, displayId, iconName) {
-            const input = document.getElementById(inputId);
-            const name = document.getElementById(nameId);
-            const display = document.getElementById(displayId);
+
+        // ============================================================
+        // FILE UPLOAD HANDLING
+        // ============================================================
+
+        function handleFileInput(
+            inputId,
+            nameId,
+            displayId,
+            iconName
+        ) {
+
+            const input =
+                document.getElementById(inputId);
+
+            const name =
+                document.getElementById(nameId);
+
+            const display =
+                document.getElementById(displayId);
+
 
             input.addEventListener('change', function(e) {
+
                 const file = e.target.files[0];
+
                 if (file) {
-                    const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-                    display.textContent = `${file.name} (${sizeMB} MB)`;
+
+                    const sizeMB =
+                        (file.size / 1024 / 1024).toFixed(2);
+
+                    display.textContent =
+                        `${file.name} (${sizeMB} MB)`;
+
                     name.classList.add('show');
-                    const icon = name.querySelector('.icon');
+
+                    const icon =
+                        name.querySelector('.icon');
+
                     if (icon) {
-                        icon.setAttribute('data-lucide', iconName);
+
+                        icon.setAttribute(
+                            'data-lucide',
+                            iconName
+                        );
+
                         lucide.createIcons();
+
                     }
                 }
+
             });
+
         }
 
-        handleFileInput('fileInput', 'fileName', 'fileNameText', 'file');
-        handleFileInput('coverInput', 'coverName', 'coverNameText', 'image');
 
-        // ===== DRAG AND DROP =====
-        function setupDropZone(dropZoneId, inputId) {
-            const dropZone = document.getElementById(dropZoneId);
-            const input = document.getElementById(inputId);
+        handleFileInput(
+            'fileInput',
+            'fileName',
+            'fileNameText',
+            'file'
+        );
 
-            dropZone.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                this.classList.add('dragover');
-            });
 
-            dropZone.addEventListener('dragleave', function(e) {
-                e.preventDefault();
-                this.classList.remove('dragover');
-            });
+        handleFileInput(
+            'coverInput',
+            'coverName',
+            'coverNameText',
+            'image'
+        );
 
-            dropZone.addEventListener('drop', function(e) {
-                e.preventDefault();
-                this.classList.remove('dragover');
-                const files = e.dataTransfer.files;
-                if (files.length) {
-                    input.files = files;
-                    input.dispatchEvent(new Event('change'));
+
+        // ============================================================
+        // DRAG AND DROP
+        // ============================================================
+
+        function setupDropZone(
+            dropZoneId,
+            inputId
+        ) {
+
+            const dropZone =
+                document.getElementById(dropZoneId);
+
+            const input =
+                document.getElementById(inputId);
+
+
+            dropZone.addEventListener(
+                'dragover',
+                function(e) {
+
+                    e.preventDefault();
+
+                    this.classList.add('dragover');
+
                 }
-            });
+            );
+
+
+            dropZone.addEventListener(
+                'dragleave',
+                function(e) {
+
+                    e.preventDefault();
+
+                    this.classList.remove('dragover');
+
+                }
+            );
+
+
+            dropZone.addEventListener(
+                'drop',
+                function(e) {
+
+                    e.preventDefault();
+
+                    this.classList.remove('dragover');
+
+                    const files =
+                        e.dataTransfer.files;
+
+                    if (files.length) {
+
+                        input.files = files;
+
+                        input.dispatchEvent(
+                            new Event('change')
+                        );
+
+                    }
+
+                }
+            );
+
         }
 
-        setupDropZone('fileDropZone', 'fileInput');
-        setupDropZone('coverDropZone', 'coverInput');
 
-        // ===== FORM SUBMISSION =====
-        document.getElementById('editForm').addEventListener('submit', function() {
-            const submitBtn = document.getElementById('submitBtn');
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = `
-                <i data-lucide="loader-2" class="icon" style="animation: spin 1s linear infinite;"></i>
-                Saving...
-            `;
-            lucide.createIcons();
-        });
+        setupDropZone(
+            'fileDropZone',
+            'fileInput'
+        );
 
-        // Spinner animation
-        const style = document.createElement('style');
+
+        setupDropZone(
+            'coverDropZone',
+            'coverInput'
+        );
+
+
+        // ============================================================
+        // FORM SUBMISSION
+        // ============================================================
+
+        document
+            .getElementById('editForm')
+            .addEventListener('submit', function() {
+
+                const submitBtn =
+                    document.getElementById('submitBtn');
+
+                submitBtn.disabled = true;
+
+                submitBtn.innerHTML = `
+                    <i data-lucide="loader-2"
+                       class="icon"
+                       style="animation: spin 1s linear infinite;"></i>
+                    Saving...
+                `;
+
+                lucide.createIcons();
+
+            });
+
+
+        // ============================================================
+        // SPINNER ANIMATION
+        // ============================================================
+
+        const style =
+            document.createElement('style');
+
         style.textContent = `
+
             @keyframes spin {
-                from { transform: rotate(0deg); }
-                to { transform: rotate(360deg); }
+
+                from {
+                    transform: rotate(0deg);
+                }
+
+                to {
+                    transform: rotate(360deg);
+                }
+
             }
+
         `;
+
         document.head.appendChild(style);
+
     </script>
+
 </body>
 </html>

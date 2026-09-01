@@ -11,9 +11,8 @@ from datetime import datetime, timedelta
 import zipfile
 import io
 from decimal import Decimal
-import psycopg2
-import psycopg2.extras
-from psycopg2 import pool as pg_pool
+import pymysql
+from pymysql.cursors import DictCursor
 import os
 import ssl
 import certifi
@@ -100,7 +99,7 @@ if os.environ.get('FLASK_ENV') != 'production':
 # ============================================
 
 # Database configuration - PostgreSQL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/bizspark')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'mysql://root:@localhost:3306/bizspark')
 
 # ============================================
 # OAUTH CONFIGURATION - GOOGLE
@@ -370,91 +369,21 @@ def favicon():
                                'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 
-def get_cart_items(user_id=None):
-    """Return cart items: from DB if user_id, else from session"""
-    if user_id:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT item_type, item_id, quantity FROM cart WHERE user_id = %s
-        """, (user_id,))
-        items = cursor.fetchall()
-        conn.close()
-        return [dict(item) for item in items]
+def get_db_connection(timeout=15, statement_timeout_ms=15000, lock_timeout_ms=5000):
+    """Create a MySQL connection while preserving the existing caller API."""
+    url = DATABASE_URL[7:] if DATABASE_URL.startswith("mysql://") else DATABASE_URL
+    auth_host, database = url.split("/", 1)
+    auth, host_port = auth_host.rsplit("@", 1) if "@" in auth_host else ("", auth_host)
+    username, password = auth.split(":", 1) if ":" in auth else (auth, "")
+    database = database.split("?", 1)[0]
+    if ":" in host_port:
+        host, port = host_port.rsplit(":", 1); port = int(port)
     else:
-        return session.get('cart', [])
-
-def set_session_cart(items):
-    session['cart'] = items
-
-def merge_session_cart_to_db(user_id):
-    """Merge session cart into user's DB cart"""
-    session_cart = session.get('cart', [])
-    if not session_cart:
-        return
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    for item in session_cart:
-        # Check if already in DB cart
-        cursor.execute("""
-            SELECT id, quantity FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s
-        """, (user_id, item['item_type'], item['item_id']))
-        existing = cursor.fetchone()
-        if existing:
-            new_qty = existing['quantity'] + item['quantity']
-            cursor.execute("""
-                UPDATE cart SET quantity = %s WHERE id = %s
-            """, (new_qty, existing['id']))
-        else:
-            cursor.execute("""
-                INSERT INTO cart (user_id, item_type, item_id, quantity)
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, item['item_type'], item['item_id'], item['quantity']))
-    conn.commit()
-    conn.close()
-    # Clear session cart
-    session.pop('cart', None)
-
-def set_session_cart(items):
-    session['cart'] = items
-
-def merge_session_cart_to_db(user_id):
-    """Merge session cart into user's DB cart"""
-    session_cart = session.get('cart', [])
-    if not session_cart:
-        return
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    for item in session_cart:
-        # Check if already in DB cart
-        cursor.execute("""
-            SELECT id, quantity FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s
-        """, (user_id, item['item_type'], item['item_id']))
-        existing = cursor.fetchone()
-        if existing:
-            new_qty = existing['quantity'] + item['quantity']
-            cursor.execute("""
-                UPDATE cart SET quantity = %s WHERE id = %s
-            """, (new_qty, existing['id']))
-        else:
-            cursor.execute("""
-                INSERT INTO cart (user_id, item_type, item_id, quantity)
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, item['item_type'], item['item_id'], item['quantity']))
-    conn.commit()
-    conn.close()
-    # Clear session cart
-    session.pop('cart', None)
-
-def get_db_connection(timeout=15):
-    """Create a database connection with optional timeout."""
-    conn = psycopg2.connect(
-        DATABASE_URL,
-        connect_timeout=timeout,
-        cursor_factory=psycopg2.extras.RealDictCursor
-    )
-    return conn
-
+        host, port = host_port, 3306
+    return pymysql.connect(host=host or "localhost", port=port, user=username or "root",
+                           password=password, database=database or "bizspark",
+                           connect_timeout=timeout, cursorclass=DictCursor,
+                           autocommit=False, charset="utf8mb4")
 
 def update_moderation_status(model, item_id, new_status, admin_id=None, rejection_reason=None):
     """
@@ -636,18 +565,18 @@ def init_db():
                 try:
                     cursor.execute(alter_stmt)
                     print(f"✅ {col_name} column added to {table_name}")
-                except psycopg2.Error as e:
+                except pymysql.MySQLError as e:
                     conn.rollback()
                     print(f"⚠️ Could not add '{col_name}' to {table_name}: {e}")
 
     # ============================================
     # USERS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='users'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='users'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE users (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password_hash VARCHAR(255),
                 full_name VARCHAR(255) NOT NULL,
@@ -694,11 +623,11 @@ def init_db():
     # ============================================
     # CUSTOMER PROFILES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='customer_profiles'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='customer_profiles'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE customer_profiles (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER UNIQUE NOT NULL,
                 username VARCHAR(50) UNIQUE,
                 bio TEXT,
@@ -723,11 +652,11 @@ def init_db():
     # ============================================
     # VENDOR PROFILES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='vendor_profiles'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='vendor_profiles'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE vendor_profiles (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER UNIQUE NOT NULL,
                 business_name VARCHAR(255) NOT NULL,
                 business_slug VARCHAR(255) UNIQUE,
@@ -788,11 +717,11 @@ def init_db():
     # ============================================
     # PASSWORD RESETS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='password_resets'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='password_resets'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE password_resets (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 reset_token VARCHAR(255) UNIQUE NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
@@ -808,11 +737,11 @@ def init_db():
     # ============================================
     # SESSIONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='sessions'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='sessions'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE sessions (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 session_id VARCHAR(255) UNIQUE NOT NULL,
                 user_id INTEGER NOT NULL,
                 data TEXT,
@@ -826,11 +755,11 @@ def init_db():
     # ============================================
     # AUDIT LOGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='audit_logs'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='audit_logs'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE audit_logs (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER,
                 action VARCHAR(100) NOT NULL,
                 details TEXT,
@@ -845,11 +774,11 @@ def init_db():
     # ============================================
     # PRODUCTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='products'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='products'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE products (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 vendor_id INTEGER NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 description TEXT,
@@ -900,11 +829,11 @@ def init_db():
     # ============================================
     # COURSES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='courses'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='courses'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE courses (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 vendor_id INTEGER NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 description TEXT,
@@ -947,11 +876,11 @@ def init_db():
     # ============================================
     # LESSONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='lessons'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='lessons'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE lessons (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 course_id INTEGER NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 description TEXT,
@@ -974,11 +903,11 @@ def init_db():
     # ============================================
     # ENROLLMENTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='enrollments'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='enrollments'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE enrollments (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 course_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
                 progress INTEGER DEFAULT 0,
@@ -996,11 +925,11 @@ def init_db():
     # ============================================
     # ORDERS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='orders'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='orders'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE orders (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 order_number VARCHAR(50) UNIQUE NOT NULL,
                 customer_id INTEGER NOT NULL,
                 vendor_id INTEGER NOT NULL,
@@ -1032,11 +961,11 @@ def init_db():
     # ============================================
     # ORDER ITEMS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='order_items'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='order_items'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE order_items (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 order_id INTEGER NOT NULL,
                 product_id INTEGER,
                 course_id INTEGER,
@@ -1053,11 +982,11 @@ def init_db():
     # ============================================
     # CONVERSATIONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='conversations'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='conversations'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE conversations (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 vendor_id INTEGER NOT NULL,
                 customer_id INTEGER NOT NULL,
                 last_message TEXT,
@@ -1074,11 +1003,11 @@ def init_db():
     # ============================================
     # MESSAGES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='messages'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='messages'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE messages (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 conversation_id INTEGER NOT NULL,
                 sender_id INTEGER NOT NULL,
                 receiver_id INTEGER NOT NULL,
@@ -1101,11 +1030,11 @@ def init_db():
     # ============================================
     # TRANSACTIONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='transactions'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='transactions'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE transactions (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 order_id INTEGER,
                 transaction_type VARCHAR(20) NOT NULL,
@@ -1124,11 +1053,11 @@ def init_db():
     # ============================================
     # WALLET TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='wallet'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='wallet'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE wallet (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER UNIQUE NOT NULL,
                 balance DECIMAL(15,2) DEFAULT 0,
                 pending_balance DECIMAL(15,2) DEFAULT 0,
@@ -1144,11 +1073,11 @@ def init_db():
     # ============================================
     # PAYOUT REQUESTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='payout_requests'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='payout_requests'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE payout_requests (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 amount DECIMAL(15,2) NOT NULL,
                 bank_name VARCHAR(100),
@@ -1172,11 +1101,11 @@ def init_db():
     # ============================================
     # REVIEWS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='reviews'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='reviews'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE reviews (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 product_id INTEGER,
                 course_id INTEGER,
                 customer_id INTEGER NOT NULL,
@@ -1200,11 +1129,11 @@ def init_db():
     # ============================================
     # SAVED ITEMS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='saved_items'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='saved_items'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE saved_items (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 customer_id INTEGER NOT NULL,
                 item_type VARCHAR(20) NOT NULL,
                 item_id INTEGER NOT NULL,
@@ -1218,11 +1147,11 @@ def init_db():
     # ============================================
     # ACTIVITY LOG TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='activity_log'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='activity_log'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE activity_log (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 action VARCHAR(100) NOT NULL,
                 description TEXT,
@@ -1236,11 +1165,11 @@ def init_db():
     # ============================================
     # PURCHASES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='purchases'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='purchases'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE purchases (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 item_type VARCHAR(20) NOT NULL,
                 item_id INTEGER NOT NULL,
@@ -1271,11 +1200,11 @@ def init_db():
     # ============================================
     # DOWNLOADS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='downloads'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='downloads'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE downloads (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 purchase_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 ip_address VARCHAR(45),
@@ -1290,11 +1219,11 @@ def init_db():
     # ============================================
     # CART TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='cart'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='cart'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE cart (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 item_type VARCHAR(20) NOT NULL,
                 item_id INTEGER NOT NULL,
@@ -1309,11 +1238,11 @@ def init_db():
     # ============================================
     # COMMUNITY POSTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='community_posts'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='community_posts'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE community_posts (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 content TEXT NOT NULL,
@@ -1331,11 +1260,11 @@ def init_db():
     # ============================================
     # COMMUNITY LIKES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='community_likes'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='community_likes'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE community_likes (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 post_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1349,11 +1278,11 @@ def init_db():
     # ============================================
     # COMMUNITY COMMENTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='community_comments'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='community_comments'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE community_comments (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 post_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 content TEXT NOT NULL,
@@ -1367,11 +1296,11 @@ def init_db():
     # ============================================
     # ADMIN LOGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='admin_logs'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='admin_logs'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE admin_logs (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 admin_id INTEGER NOT NULL,
                 action VARCHAR(100) NOT NULL,
                 details TEXT,
@@ -1385,11 +1314,11 @@ def init_db():
     # ============================================
     # EMAIL LOGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='email_logs'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='email_logs'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE email_logs (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 recipient_email VARCHAR(255) NOT NULL,
                 subject VARCHAR(255) NOT NULL,
                 type VARCHAR(50),
@@ -1403,18 +1332,18 @@ def init_db():
     # ============================================
     # SETTINGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='settings'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='settings'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE settings (
-                id SERIAL PRIMARY KEY,
-                key VARCHAR(100) UNIQUE NOT NULL,
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                `key` VARCHAR(100) UNIQUE NOT NULL,
                 value TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        cursor.execute("INSERT INTO settings (key, value) VALUES ('commission_rate', '30') ON CONFLICT (key) DO NOTHING")
-        cursor.execute("INSERT INTO settings (key, value) VALUES ('min_withdrawal', '5000') ON CONFLICT (key) DO NOTHING")
+        cursor.execute("INSERT IGNORE INTO settings (`key`, `value`) VALUES ('commission_rate', '30')")
+        cursor.execute("INSERT IGNORE INTO settings (`key`, `value`) VALUES ('min_withdrawal', '5000')")
         print("✅ settings table created with defaults")
 
     # ============================================
@@ -1823,7 +1752,6 @@ def handle_oauth_user(email, full_name, provider, provider_id):
                 onboarding_completed
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, email, full_name, user_type, is_verified, auth_provider, onboarding_completed
         ''', (
             email,
             full_name,
@@ -2043,383 +1971,760 @@ def vendor_dashboard():
     )
 
 
+from decimal import Decimal, InvalidOperation
+
+
 @app.route('/vendor/products/<int:product_id>/edit', methods=['GET', 'POST'])
 @login_required
 def vendor_edit_product(product_id):
     """Edit a product"""
     user_id = session.get('user_id')
 
+    # ============================================================
+    # GET EXISTING PRODUCT
+    # ============================================================
     conn = get_db_connection()
     cursor = conn.cursor()
+
     cursor.execute(
         "SELECT * FROM products WHERE id = %s AND vendor_id = %s",
         (product_id, user_id)
     )
+
     product = cursor.fetchone()
+
+    cursor.close()
     conn.close()
 
     if not product:
         flash('Product not found or you do not have permission.', 'error')
         return redirect(url_for('vendor_products'))
 
+    # ============================================================
+    # POST - UPDATE PRODUCT
+    # ============================================================
     if request.method == 'POST':
+
         title = request.form.get('title', '').strip()
         description = request.form.get('description', '').strip()
-        category = request.form.get('category', '')
-        product_type = request.form.get('product_type', '')
-        price = request.form.get('price', 0)
+        category = request.form.get('category', '').strip()
+        product_type = request.form.get('product_type', '').strip()
+        price_input = request.form.get('price', '0').strip()
         tags = request.form.get('tags', '').strip()
-        is_active = request.form.get('is_active') == 'on'
 
-        # Validate
+        # Checkbox values need to match the database INTEGER column.
+        # Checked = 1
+        # Unchecked = 0
+        is_active = 1 if request.form.get('is_active') == 'on' else 0
+
+        # ========================================================
+        # VALIDATION
+        # ========================================================
+
         if not title or len(title) < 3:
             flash('Product title must be at least 3 characters.', 'error')
-            return redirect(url_for('vendor_edit_product', product_id=product_id))
+            return redirect(
+                url_for(
+                    'vendor_edit_product',
+                    product_id=product_id
+                )
+            )
 
         if not description:
             flash('Product description is required.', 'error')
-            return redirect(url_for('vendor_edit_product', product_id=product_id))
+            return redirect(
+                url_for(
+                    'vendor_edit_product',
+                    product_id=product_id
+                )
+            )
+
+        # ========================================================
+        # PRICE VALIDATION
+        # ========================================================
 
         try:
-            price = float(price)
-            if price <= 0:
-                flash('Price must be greater than 0.', 'error')
-                return redirect(url_for('vendor_edit_product', product_id=product_id))
-        except ValueError:
-            flash('Please enter a valid price.', 'error')
-            return redirect(url_for('vendor_edit_product', product_id=product_id))
+            price = Decimal(price_input)
 
-        # Handle file uploads
+            if price <= Decimal('0'):
+                flash('Price must be greater than 0.', 'error')
+                return redirect(
+                    url_for(
+                        'vendor_edit_product',
+                        product_id=product_id
+                    )
+                )
+
+            # Keep price at two decimal places
+            price = price.quantize(Decimal('0.01'))
+
+        except (InvalidOperation, ValueError):
+            flash('Please enter a valid price.', 'error')
+            return redirect(
+                url_for(
+                    'vendor_edit_product',
+                    product_id=product_id
+                )
+            )
+
+        # ========================================================
+        # HANDLE FILE UPLOADS
+        # ========================================================
+
         file = request.files.get('file')
         cover_image = request.files.get('cover_image')
 
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Get current product data
-        cursor.execute(
-            "SELECT file_url, cover_image FROM products WHERE id = %s AND vendor_id = %s",
-            (product_id, user_id)
+        try:
+
+            # ====================================================
+            # GET CURRENT FILE DATA
+            # ====================================================
+
+            cursor.execute(
+                """
+                SELECT file_url, cover_image
+                FROM products
+                WHERE id = %s AND vendor_id = %s
+                """,
+                (product_id, user_id)
+            )
+
+            current_product = cursor.fetchone()
+
+            if not current_product:
+                flash(
+                    'Product not found or you do not have permission.',
+                    'error'
+                )
+
+                cursor.close()
+                conn.close()
+
+                return redirect(url_for('vendor_products'))
+
+            # ====================================================
+            # CURRENT PRODUCT FILE
+            # ====================================================
+
+            file_url = current_product['file_url']
+
+            # ====================================================
+            # NEW PRODUCT FILE
+            # ====================================================
+
+            if file and file.filename:
+
+                if allowed_file(file.filename):
+
+                    filename = secure_filename(file.filename)
+
+                    unique_filename = (
+                        f"{secrets.token_hex(8)}_{filename}"
+                    )
+
+                    upload_dir = os.path.join(
+                        UPLOAD_FOLDER,
+                        str(user_id)
+                    )
+
+                    os.makedirs(
+                        upload_dir,
+                        exist_ok=True
+                    )
+
+                    file_path = os.path.join(
+                        upload_dir,
+                        unique_filename
+                    )
+
+                    file.save(file_path)
+
+                    file_url = (
+                        f"/static/uploads/"
+                        f"{user_id}/{unique_filename}"
+                    )
+
+                else:
+                    flash(
+                        'Invalid product file type.',
+                        'error'
+                    )
+
+                    cursor.close()
+                    conn.close()
+
+                    return redirect(
+                        url_for(
+                            'vendor_edit_product',
+                            product_id=product_id
+                        )
+                    )
+
+            # ====================================================
+            # CURRENT COVER IMAGE
+            # ====================================================
+
+            cover_filename = current_product['cover_image']
+
+            # ====================================================
+            # NEW COVER IMAGE
+            # ====================================================
+
+            if cover_image and cover_image.filename:
+
+                if allowed_file(cover_image.filename):
+
+                    filename = secure_filename(
+                        cover_image.filename
+                    )
+
+                    unique_cover = (
+                        f"{secrets.token_hex(8)}_{filename}"
+                    )
+
+                    upload_dir = os.path.join(
+                        UPLOAD_FOLDER,
+                        str(user_id)
+                    )
+
+                    os.makedirs(
+                        upload_dir,
+                        exist_ok=True
+                    )
+
+                    cover_path = os.path.join(
+                        upload_dir,
+                        unique_cover
+                    )
+
+                    cover_image.save(cover_path)
+
+                    cover_filename = (
+                        f"/static/uploads/"
+                        f"{user_id}/{unique_cover}"
+                    )
+
+                else:
+                    flash(
+                        'Invalid cover image type.',
+                        'error'
+                    )
+
+                    cursor.close()
+                    conn.close()
+
+                    return redirect(
+                        url_for(
+                            'vendor_edit_product',
+                            product_id=product_id
+                        )
+                    )
+
+            # ====================================================
+            # UPDATE PRODUCT
+            # ====================================================
+
+            cursor.execute(
+                '''
+                UPDATE products
+                SET
+                    title = %s,
+                    description = %s,
+                    category = %s,
+                    product_type = %s,
+                    price = %s,
+                    tags = %s,
+                    is_active = %s,
+                    file_url = %s,
+                    cover_image = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                  AND vendor_id = %s
+                ''',
+                (
+                    title,
+                    description,
+                    category,
+                    product_type,
+                    price,
+                    tags,
+                    is_active,
+                    file_url,
+                    cover_filename,
+                    product_id,
+                    user_id
+                )
+            )
+
+            # ====================================================
+            # COMMIT CHANGES
+            # ====================================================
+
+            conn.commit()
+
+        except Exception as e:
+
+            # Roll back database changes if anything goes wrong
+            conn.rollback()
+
+            print(
+                f"Error updating product {product_id}: {e}"
+            )
+
+            flash(
+                'An error occurred while updating the product. '
+                'Please try again.',
+                'error'
+            )
+
+            cursor.close()
+            conn.close()
+
+            return redirect(
+                url_for(
+                    'vendor_edit_product',
+                    product_id=product_id
+                )
+            )
+
+        finally:
+
+            # Make sure resources are closed
+            try:
+                cursor.close()
+            except Exception:
+                pass
+
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        flash(
+            'Product updated successfully!',
+            'success'
         )
-        current_product = cursor.fetchone()
 
-        # Update file if new file uploaded
-        file_url = current_product['file_url']
-        if file and file.filename != '':
-            if allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                unique_filename = f"{secrets.token_hex(8)}_{filename}"
+        return redirect(
+            url_for('vendor_products')
+        )
 
-                upload_dir = os.path.join(UPLOAD_FOLDER, str(user_id))
-                if not os.path.exists(upload_dir):
-                    os.makedirs(upload_dir)
+    # ============================================================
+    # GET - CONVERT PRODUCT TO DICT
+    # ============================================================
 
-                file_path = os.path.join(upload_dir, unique_filename)
-                file.save(file_path)
-                file_url = f"/static/uploads/{user_id}/{unique_filename}"
-
-        # Update cover image if new cover uploaded
-        cover_filename = current_product['cover_image']
-        if cover_image and cover_image.filename != '':
-            if allowed_file(cover_image.filename):
-                filename = secure_filename(cover_image.filename)
-                unique_cover = f"{secrets.token_hex(8)}_{filename}"
-
-                upload_dir = os.path.join(UPLOAD_FOLDER, str(user_id))
-                if not os.path.exists(upload_dir):
-                    os.makedirs(upload_dir)
-
-                cover_path = os.path.join(upload_dir, unique_cover)
-                cover_image.save(cover_path)
-                cover_filename = f"/static/uploads/{user_id}/{unique_cover}"
-
-        # Update product in database
-        cursor.execute('''
-            UPDATE products 
-            SET title = %s, 
-                description = %s, 
-                category = %s, 
-                product_type = %s,
-                price = %s, 
-                tags = %s, 
-                is_active = %s,
-                file_url = %s,
-                cover_image = %s,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s AND vendor_id = %s
-        ''', (
-            title,
-            description,
-            category,
-            product_type,
-            price,
-            tags,
-            is_active,
-            file_url,
-            cover_filename,
-            product_id,
-            user_id
-        ))
-
-        conn.commit()
-        conn.close()
-
-        flash('✅ Product updated successfully!', 'success')
-        return redirect(url_for('vendor_products'))
-
-    # Convert product to dict for template
     product_dict = dict(product)
 
-    return render_template('dashboard/vendor/edit-product.html', product=product_dict)
+    return render_template(
+        'dashboard/vendor/edit-product.html',
+        product=product_dict
+    )
 
 # ============================================
 # VENDOR TERMS & TIN ROUTES
 # ============================================
 
 
+# ============================================
+# MARKETPLACE CART API
+# ============================================
+
+
+def _api_success(message, data=None, status=200):
+    return jsonify({'success': True, 'message': message, 'data': data or {}}), status
+
+
+def _api_error(error_code, message, status=400, details=None):
+    payload = {'success': False, 'error': error_code, 'message': message}
+    if details is not None:
+        payload['details'] = str(details)
+    return jsonify(payload), status
+
+
+def _api_user_id():
+    user_id = session.get('user_id')
+    if not user_id or user_id == 'temp_user':
+        return None
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _log_api_exception(endpoint, user_id=None, product_id=None, quantity=None, exc=None):
+    app.logger.exception(
+        'marketplace_cart_error endpoint=%s user_id=%s product_id=%s quantity=%s error_type=%s message=%s',
+        endpoint, user_id, product_id, quantity, type(exc).__name__ if exc else 'Unknown', str(exc) if exc else ''
+    )
+
+
+def _is_lock_contention_error(exc):
+    """True if exc is Postgres refusing to wait any longer for a lock
+    (lock_timeout) or a query that ran past statement_timeout. These are
+    expected under concurrent cart updates and should be reported to the
+    browser as a clean, retryable conflict -- not a generic 500."""
+    return isinstance(exc, (pymysql.err.OperationalError, pymysql.err.InternalError))
+
+
+def _parse_json_object():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise ValueError('Request body must be a JSON object.')
+    return data
+
+
+def _positive_int(value, field_name, minimum=1):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f'{field_name} must be an integer.')
+    if parsed < minimum:
+        raise ValueError(f'{field_name} must be at least {minimum}.')
+    return parsed
+
+
+def _cart_count(cursor, user_id):
+    # Must mirror _cart_rows' is_active/is_approved filter -- otherwise the
+    # header badge can show items (e.g. "2") that /api/cart silently drops
+    # because the underlying product was deactivated or unapproved after
+    # being added to a cart. That mismatch is what made "Proceed to
+    # checkout" look broken: badge says items exist, cart page is empty,
+    # button stays disabled, no error shown anywhere.
+    cursor.execute('''
+        SELECT COALESCE(SUM(c.quantity), 0) AS count
+        FROM cart c
+        LEFT JOIN products p ON c.item_type = 'product' AND c.item_id = p.id
+        LEFT JOIN courses co ON c.item_type = 'course' AND c.item_id = co.id
+        WHERE c.user_id = %s
+          AND (
+                (c.item_type = 'product' AND p.is_active = 1 AND p.is_approved = 1)
+             OR (c.item_type = 'course' AND co.is_active = 1 AND co.is_approved = 1)
+          )
+    ''', (user_id,))
+    return int(cursor.fetchone()['count'] or 0)
+
+
+def _cart_rows(cursor, user_id):
+    cursor.execute('''
+        SELECT c.id AS cart_id, c.item_type, c.item_id, c.quantity,
+               p.title, p.description, p.price, p.cover_image, p.category,
+               p.product_type, p.is_digital, p.stock_quantity,
+               COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor') AS vendor_name,
+               p.vendor_id
+        FROM cart c
+        JOIN products p ON c.item_type = 'product' AND c.item_id = p.id
+        LEFT JOIN users u ON p.vendor_id = u.id
+        LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
+        WHERE c.user_id = %s
+          AND p.is_active = 1 AND p.is_approved = 1
+        ORDER BY c.added_at DESC, c.id DESC
+    ''', (user_id,))
+    product_rows = cursor.fetchall()
+
+    cursor.execute('''
+        SELECT c.id AS cart_id, c.item_type, c.item_id, c.quantity,
+               co.title, co.description, co.price, co.cover_image, co.category,
+               'course' AS product_type, co.is_digital, NULL AS stock_quantity,
+               COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor') AS vendor_name,
+               co.vendor_id
+        FROM cart c
+        JOIN courses co ON c.item_type = 'course' AND c.item_id = co.id
+        LEFT JOIN users u ON co.vendor_id = u.id
+        LEFT JOIN vendor_profiles v ON co.vendor_id = v.user_id
+        WHERE c.user_id = %s
+          AND co.is_active = 1 AND co.is_approved = 1
+        ORDER BY c.added_at DESC, c.id DESC
+    ''', (user_id,))
+    return list(product_rows) + list(cursor.fetchall())
+
+
+def _money(value):
+    return format(value or Decimal('0.00'), '.2f')
+
+
+VAT_RATE = Decimal('0.075')  # Nigeria standard VAT rate (7.5%)
+
+# Server-side shipping table, keyed by the same countries the checkout
+# page offers. The route below looks the cost up from here rather than
+# trusting a shipping_cost figure sent by the browser -- prices must
+# always be authoritative on the server (see Part 15 of the brief).
+SHIPPING_RATES = {
+    'Nigeria': Decimal('2000.00'),
+    'Ghana': Decimal('5000.00'),
+    'Kenya': Decimal('5000.00'),
+    'South Africa': Decimal('8000.00'),
+}
+SHIPPING_RATE_DEFAULT = Decimal('10000.00')
+
+
+def _pricing_breakdown(cart_rows, shipping_cost=None):
+    """
+    Single source of truth for cart pricing math, in Decimal throughout
+    (never float) so this can safely be reused anywhere money needs to be
+    calculated: the cart page, the checkout page, and the amount actually
+    sent to Paystack. Using one shared function guarantees those three
+    numbers can never drift apart the way they had before (cart showed
+    VAT, checkout silently charged a different, VAT-free amount).
+
+    VAT is charged on goods only, not on shipping -- the standard way
+    Nigerian VAT is applied to a mixed goods+shipping order.
+    """
+    subtotal = Decimal('0.00')
+    for row in cart_rows:
+        price = row['price'] or Decimal('0.00')
+        subtotal += price * int(row['quantity'])
+    shipping = Decimal(str(shipping_cost)) if shipping_cost else Decimal('0.00')
+    vat = (subtotal * VAT_RATE).quantize(Decimal('0.01'))
+    total = subtotal + vat + shipping
+    return {'subtotal': subtotal, 'vat': vat, 'shipping': shipping, 'total': total}
+
+
 @app.route('/api/cart/add', methods=['POST'])
 def add_to_cart():
-    data = request.get_json()
-    item_type = data.get('item_type')
-    item_id = data.get('item_id')
-    quantity = data.get('quantity', 1)
-
-    if item_type not in ['course', 'product']:
-        return jsonify({'success': False, 'message': 'Invalid item type.'}), 400
-
-    # Check if item exists and is active (same as before)
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if item_type == 'course':
-        cursor.execute("SELECT id FROM courses WHERE id = %s AND is_active = 1 AND is_approved = 1", (item_id,))
-    else:
-        cursor.execute("SELECT id FROM products WHERE id = %s AND is_active = 1 AND is_approved = 1", (item_id,))
-    if not cursor.fetchone():
-        conn.close()
-        return jsonify({'success': False, 'message': 'Item not found or unavailable.'}), 404
-    conn.close()
-
-    user_id = session.get('user_id')
-    if user_id:
-        # Logged in: use DB
+    endpoint = request.path
+    user_id = _api_user_id()
+    product_id = None
+    quantity = None
+    conn = cursor = None
+    try:
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in before adding items to your cart.', 401)
+        data = _parse_json_object()
+        item_type = data.get('item_type', 'product')
+        if item_type not in ('product', 'course'):
+            return _api_error('INVALID_ITEM_TYPE', 'item_type must be product or course.', 400)
+        product_id = _positive_int(data.get('item_id', data.get('product_id')), 'item_id')
+        quantity = _positive_int(data.get('quantity', 1), 'quantity')
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, quantity FROM cart 
-            WHERE user_id = %s AND item_type = %s AND item_id = %s
-        """, (user_id, item_type, item_id))
-        existing = cursor.fetchone()
-        if existing:
-            new_qty = existing['quantity'] + quantity
-            cursor.execute("""
-                UPDATE cart SET quantity = %s, added_at = CURRENT_TIMESTAMP WHERE id = %s
-            """, (new_qty, existing['id']))
+        if item_type == 'product':
+            cursor.execute('''SELECT id, title, price, stock_quantity FROM products
+                              WHERE id = %s AND is_active = 1 AND is_approved = 1
+                              FOR UPDATE''', (product_id,))
         else:
-            cursor.execute("""
-                INSERT INTO cart (user_id, item_type, item_id, quantity)
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, item_type, item_id, quantity))
+            cursor.execute('''SELECT id, title, price, NULL AS stock_quantity FROM courses
+                              WHERE id = %s AND is_active = 1 AND is_approved = 1
+                              FOR UPDATE''', (product_id,))
+        item = cursor.fetchone()
+        if not item:
+            conn.rollback()
+            return _api_error('ITEM_NOT_FOUND', 'The requested item does not exist or is not available.', 404)
+        cursor.execute('''SELECT id, quantity FROM cart
+                          WHERE user_id = %s AND item_type = %s AND item_id = %s
+                          FOR UPDATE''', (user_id, item_type, product_id))
+        existing = cursor.fetchone()
+        new_quantity = quantity + int(existing['quantity']) if existing else quantity
+        if item['stock_quantity'] is not None and new_quantity > int(item['stock_quantity']):
+            conn.rollback()
+            return _api_error('INSUFFICIENT_STOCK', f'Only {item["stock_quantity"]} units are available.', 400)
+        if existing:
+            cursor.execute('UPDATE cart SET quantity = %s, added_at = CURRENT_TIMESTAMP WHERE id = %s', (new_quantity, existing['id']))
+            cart_id = existing['id']
+        else:
+            cursor.execute('''INSERT INTO cart (user_id, item_type, item_id, quantity)
+                              VALUES (%s, %s, %s, %s)''', (user_id, item_type, product_id, new_quantity))
+            cart_id = cursor.lastrowid
+        count = _cart_count(cursor, user_id)
         conn.commit()
-        conn.close()
-    else:
-        # Anonymous: store in session
-        cart = session.get('cart', [])
-        # Check if item already in session cart
-        found = False
-        for item in cart:
-            if item['item_type'] == item_type and item['item_id'] == item_id:
-                item['quantity'] += quantity
-                found = True
-                break
-        if not found:
-            cart.append({
-                'item_type': item_type,
-                'item_id': item_id,
-                'quantity': quantity
-            })
-        session['cart'] = cart
+        return _api_success('Item added to cart.', {'cart_id': cart_id, 'item_type': item_type, 'item_id': product_id, 'quantity': new_quantity, 'cart_count': count})
+    except ValueError as exc:
+        if conn: conn.rollback()
+        return _api_error('INVALID_REQUEST', str(exc), 400)
+    except Exception as exc:
+        if conn: conn.rollback()
+        _log_api_exception(endpoint, user_id, product_id, quantity, exc)
+        if _is_lock_contention_error(exc):
+            return _api_error('CART_BUSY', 'This item is being updated right now. Please try again.', 409)
+        return _api_error('CART_ADD_FAILED', 'Unable to add the item to your cart.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
-    return jsonify({'success': True, 'message': 'Added to cart!'})
+
+@app.route('/api/cart', methods=['GET'])
+@app.route('/api/cart/items', methods=['GET'])
+def get_cart():
+    endpoint = request.path
+    user_id = _api_user_id()
+    conn = cursor = None
+    try:
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to view your cart.', 401)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        rows = _cart_rows(cursor, user_id)
+        items = []
+        for row in rows:
+            price = row['price'] or Decimal('0.00')
+            line_total = price * int(row['quantity'])
+            item = dict(row)
+            item.pop('created_at', None)
+            item['price'] = _money(price)
+            item['line_total'] = _money(line_total)
+            items.append(item)
+        pricing = _pricing_breakdown(rows)
+        return _api_success('Cart loaded.', {'items': items, 'count': sum(int(row['quantity']) for row in rows), 'subtotal': _money(pricing['subtotal']), 'vat': _money(pricing['vat']), 'total': _money(pricing['subtotal'] + pricing['vat'])})
+    except Exception as exc:
+        _log_api_exception(endpoint, user_id, None, None, exc)
+        return _api_error('CART_LOAD_FAILED', 'Unable to load your cart.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+@app.route('/api/cart/count', methods=['GET'])
+def cart_count():
+    endpoint = request.path
+    user_id = _api_user_id()
+    conn = cursor = None
+    try:
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to view your cart count.', 401)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        return _api_success('Cart count loaded.', {'count': _cart_count(cursor, user_id)})
+    except Exception as exc:
+        _log_api_exception(endpoint, user_id, None, None, exc)
+        return _api_error('CART_COUNT_FAILED', 'Unable to load the cart count.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+@app.route('/api/cart/update/<int:cart_id>', methods=['PUT'])
+def update_cart(cart_id):
+    endpoint = request.path
+    user_id = _api_user_id()
+    conn = cursor = None
+    try:
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to update your cart.', 401)
+        data = _parse_json_object()
+        quantity = _positive_int(data.get('quantity'), 'quantity')
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''SELECT c.item_type, c.item_id, p.stock_quantity FROM cart c
+                          LEFT JOIN products p ON c.item_type = 'product' AND c.item_id = p.id
+                          WHERE c.id = %s AND c.user_id = %s FOR UPDATE''', (cart_id, user_id))
+        row = cursor.fetchone()
+        if not row:
+            conn.rollback()
+            return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
+        if row['stock_quantity'] is not None and quantity > int(row['stock_quantity']):
+            conn.rollback()
+            return _api_error('INSUFFICIENT_STOCK', f'Only {row["stock_quantity"]} units are available.', 400)
+        cursor.execute('UPDATE cart SET quantity = %s WHERE id = %s AND user_id = %s', (quantity, cart_id, user_id))
+        count = _cart_count(cursor, user_id)
+        conn.commit()
+        return _api_success('Cart quantity updated.', {'cart_id': cart_id, 'quantity': quantity, 'cart_count': count})
+    except ValueError as exc:
+        if conn: conn.rollback()
+        return _api_error('INVALID_REQUEST', str(exc), 400)
+    except Exception as exc:
+        if conn: conn.rollback()
+        _log_api_exception(endpoint, user_id, None, None, exc)
+        if _is_lock_contention_error(exc):
+            return _api_error('CART_BUSY', 'This item is being updated right now. Please try again.', 409)
+        return _api_error('CART_UPDATE_FAILED', 'Unable to update the cart item.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+@app.route('/api/cart/remove/<int:cart_id>', methods=['DELETE'])
+def remove_cart_item(cart_id):
+    endpoint = request.path
+    user_id = _api_user_id()
+    conn = cursor = None
+    try:
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to modify your cart.', 401)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM cart WHERE id = %s AND user_id = %s', (cart_id, user_id))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
+        count = _cart_count(cursor, user_id)
+        conn.commit()
+        return _api_success('Item removed from cart.', {'cart_id': cart_id, 'cart_count': count})
+    except Exception as exc:
+        if conn: conn.rollback()
+        _log_api_exception(endpoint, user_id, None, None, exc)
+        if _is_lock_contention_error(exc):
+            return _api_error('CART_BUSY', 'This item is being updated right now. Please try again.', 409)
+        return _api_error('CART_REMOVE_FAILED', 'Unable to remove the cart item.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+@app.route('/api/cart/clear', methods=['DELETE'])
+def clear_cart():
+    endpoint = request.path
+    user_id = _api_user_id()
+    conn = cursor = None
+    try:
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to clear your cart.', 401)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM cart WHERE user_id = %s', (user_id,))
+        removed = cursor.rowcount
+        conn.commit()
+        return _api_success('Cart cleared.', {'removed_items': removed, 'cart_count': 0})
+    except Exception as exc:
+        if conn: conn.rollback()
+        _log_api_exception(endpoint, user_id, None, None, exc)
+        return _api_error('CART_CLEAR_FAILED', 'Unable to clear your cart.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
+# Backward-compatible aliases for existing checkout-adjacent pages.
+@app.route('/api/cart/update', methods=['POST'])
+def legacy_update_cart():
+    try:
+        data = _parse_json_object()
+        user_id = _api_user_id()
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to update your cart.', 401)
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute('SELECT id FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s', (user_id, data.get('item_type', 'product'), data.get('item_id')))
+        row = cursor.fetchone(); cursor.close(); conn.close()
+        if not row:
+            return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
+        return update_cart(row['id'])
+    except Exception as exc:
+        _log_api_exception(request.path, _api_user_id(), None, None, exc)
+        return _api_error('CART_UPDATE_FAILED', 'Unable to update the cart item.', 500, exc)
 
 
 @app.route('/api/cart/remove', methods=['POST'])
-@login_required
-def remove_from_cart():
-    """Remove an item from the cart"""
-    user_id = session.get('user_id')
-    data = request.get_json()
-
-    item_type = data.get('item_type')
-    item_id = data.get('item_id')
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        DELETE FROM cart 
-        WHERE user_id = %s AND item_type = %s AND item_id = %s
-    """, (user_id, item_type, item_id))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({'success': True, 'message': 'Removed from cart.'})
-
-
-@app.route('/api/cart/update', methods=['POST'])
-@login_required
-def update_cart_quantity():
-    user_id = session.get('user_id')
-    data = request.get_json()
-    item_type = data.get('item_type')
-    item_id = data.get('item_id')
-    quantity = data.get('quantity', 1)
-
-    if item_type not in ['product', 'course']:
-        return jsonify({'success': False, 'message': 'Invalid item type.'}), 400
-
-    # Courses cannot change quantity – always return a proper JSON response
-    if item_type == 'course':
-        return jsonify({'success': False, 'message': 'Course quantity cannot be changed.'}), 400
-
-    if quantity < 1:
-        # Remove item
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            DELETE FROM cart
-            WHERE user_id = %s AND item_type = %s AND item_id = %s
-        """, (user_id, item_type, item_id))
-        conn.commit()
-        conn.close()
-        return jsonify({'success': True, 'action': 'removed'})
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE cart
-        SET quantity = %s
-        WHERE user_id = %s AND item_type = %s AND item_id = %s
-    """, (quantity, user_id, item_type, item_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-@app.route('/api/cart/count')
-def cart_count():
-    user_id = session.get('user_id')
-    if user_id:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as count FROM cart WHERE user_id = %s", (user_id,))
-        count = cursor.fetchone()['count']
-        conn.close()
-    else:
-        count = len(session.get('cart', []))
-    return jsonify({'count': count})
-
+def legacy_remove_cart():
+    try:
+        data = _parse_json_object(); user_id = _api_user_id()
+        if user_id is None:
+            return _api_error('AUTH_REQUIRED', 'Please log in to modify your cart.', 401)
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute('SELECT id FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s', (user_id, data.get('item_type', 'product'), data.get('item_id')))
+        row = cursor.fetchone(); cursor.close(); conn.close()
+        if not row:
+            return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
+        return remove_cart_item(row['id'])
+    except Exception as exc:
+        _log_api_exception(request.path, _api_user_id(), None, None, exc)
+        return _api_error('CART_REMOVE_FAILED', 'Unable to remove the cart item.', 500, exc)
 
 
 @app.route('/cart')
+@login_required
 def view_cart():
-    user_id = session.get('user_id')
-
-    if user_id:
-        # Logged-in user: fetch from database
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Products in cart
-        cursor.execute("""
-            SELECT 
-                c.id as cart_id,
-                c.item_type,
-                c.item_id,
-                c.quantity,
-                p.title,
-                p.price,
-                p.cover_image,
-                v.business_name as vendor_name,
-                p.is_digital
-            FROM cart c
-            JOIN products p ON c.item_id = p.id
-            LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
-            WHERE c.user_id = %s AND c.item_type = 'product'
-        """, (user_id,))
-        products = cursor.fetchall()
-
-        # Courses in cart
-        cursor.execute("""
-            SELECT 
-                c.id as cart_id,
-                c.item_type,
-                c.item_id,
-                c.quantity,
-                co.title,
-                co.price,
-                co.cover_image,
-                v.business_name as vendor_name,
-                NULL as is_digital
-            FROM cart c
-            JOIN courses co ON c.item_id = co.id
-            LEFT JOIN vendor_profiles v ON co.vendor_id = v.user_id
-            WHERE c.user_id = %s AND c.item_type = 'course'
-        """, (user_id,))
-        courses = cursor.fetchall()
-
-        cart_items = list(products) + list(courses)
-        conn.close()
-
-    else:
-        # Anonymous user: fetch from session
-        session_cart = session.get('cart', [])
-        cart_items = []
-
-        for item in session_cart:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-
-            if item['item_type'] == 'product':
-                cursor.execute("""
-                    SELECT p.id, p.title, p.price, p.cover_image, p.is_digital,
-                           v.business_name as vendor_name
-                    FROM products p
-                    LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
-                    WHERE p.id = %s
-                """, (item['item_id'],))
-            else:  # course
-                cursor.execute("""
-                    SELECT co.id, co.title, co.price, co.cover_image,
-                           v.business_name as vendor_name,
-                           NULL as is_digital
-                    FROM courses co
-                    LEFT JOIN vendor_profiles v ON co.vendor_id = v.user_id
-                    WHERE co.id = %s
-                """, (item['item_id'],))
-
-            row = cursor.fetchone()
-            conn.close()
-
-            if row:
-                cart_items.append({
-                    'cart_id': None,
-                    'item_type': item['item_type'],
-                    'item_id': item['item_id'],
-                    'quantity': item['quantity'],
-                    'title': row['title'],
-                    'price': row['price'],
-                    'cover_image': row['cover_image'],
-                    'vendor_name': row['vendor_name'],
-                    'is_digital': row['is_digital'] if item['item_type'] == 'product' else None
-                })
-
-    total_price = sum(item['price'] * item['quantity'] for item in cart_items)
-    shipping_cost = 0  # You can compute later if needed
-
-    return render_template('cart.html', cart_items=cart_items, total_price=total_price, shipping_cost=shipping_cost)
-
-
+    return render_template('cart.html')
 
 
 @app.route('/checkout/cart')
@@ -2428,6 +2733,11 @@ def checkout_cart():
     user_id = session.get('user_id')
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    # Logged-in customer's own info, so the checkout form can be pre-filled
+    # instead of asking them to retype what we already know about them.
+    cursor.execute("SELECT full_name, email, phone_number FROM users WHERE id = %s", (user_id,))
+    customer = cursor.fetchone() or {}
 
     # Fetch products
     cursor.execute("""
@@ -2470,9 +2780,8 @@ def checkout_cart():
     courses = cursor.fetchall()
 
     cart_items = list(products) + list(courses)
-    total_price = sum(item['price'] * item['quantity'] for item in cart_items)
+    pricing = _pricing_breakdown(cart_items)  # shipping added client-side once a country is picked
 
-    # 🔥 FIXED: Use bracket notation, not .get()
     has_physical_items = any(
         item['item_type'] == 'product' and item['is_digital'] == 0
         for item in cart_items
@@ -2482,8 +2791,11 @@ def checkout_cart():
     return render_template(
         'checkout/cart-checkout.html',
         cart_items=cart_items,
-        total_price=total_price,
+        subtotal=pricing['subtotal'],
+        vat=pricing['vat'],
+        total_price=pricing['subtotal'] + pricing['vat'],
         has_physical_items=has_physical_items,
+        customer=customer,
         paystack_public_key=PAYSTACK_PUBLIC_KEY
     )
 
@@ -2548,7 +2860,7 @@ def verify_cart_payment():
             return redirect(url_for('view_cart'))
 
         # ----- Payment is successful – start transaction -----
-        # psycopg2 opens a transaction automatically with the first statement
+        # pymysql opens a transaction automatically with the first statement
         cursor = conn.cursor()  # re-use cursor after retry loop
 
         cart_items = json.loads(purchase['metadata']) if purchase['metadata'] else []
@@ -2568,7 +2880,6 @@ def verify_cart_payment():
                         payment_method, transaction_id, customer_name, customer_email
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
-                    RETURNING id
                 """, (
                     order_number,
                     user_id,
@@ -2585,7 +2896,7 @@ def verify_cart_payment():
                     customer_name,
                     customer_email
                 ))
-                order_id = cursor.fetchone()['id']
+                order_id = cursor.lastrowid
                 vendor_ids.add(item['vendor_id'])
 
                 credit_vendor_wallet_with_conn(
@@ -2612,7 +2923,6 @@ def verify_cart_payment():
                         payment_method, transaction_id, customer_name, customer_email
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
-                    RETURNING id
                 """, (
                     order_number,
                     user_id,
@@ -2629,7 +2939,7 @@ def verify_cart_payment():
                     customer_name,
                     customer_email
                 ))
-                order_id = cursor.fetchone()['id']
+                order_id = cursor.lastrowid
                 vendor_ids.add(item['vendor_id'])
 
                 credit_vendor_wallet_with_conn(
@@ -2873,7 +3183,7 @@ def admin_dashboard():
     total_users = cursor.fetchone()['count']
 
     # ===== New users this week =====
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE created_at >= NOW() - INTERVAL '7 days'")
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE created_at >= NOW() - INTERVAL 7 DAY")
     new_users = cursor.fetchone()['count']
 
     # ===== Total products & courses =====
@@ -3064,7 +3374,7 @@ def admin_users():
     params = []
 
     if search:
-        base_query += " AND (u.email ILIKE %s OR u.full_name ILIKE %s OR cp.username ILIKE %s OR vp.business_name ILIKE %s)"
+        base_query += " AND (u.email LIKE %s OR u.full_name LIKE %s OR cp.username LIKE %s OR vp.business_name LIKE %s)"
         search_term = f"%{search}%"
         params.extend([search_term, search_term, search_term, search_term])
 
@@ -3131,22 +3441,22 @@ def admin_settings():
         # Use INSERT ... ON CONFLICT to update or insert
         cursor.execute("""
             INSERT INTO settings (key, value) VALUES ('commission_rate', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (commission,))
 
         cursor.execute("""
             INSERT INTO settings (key, value) VALUES ('min_withdrawal', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (min_withdrawal,))
 
         cursor.execute("""
             INSERT INTO settings (key, value) VALUES ('support_phone', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (support_phone,))
 
         cursor.execute("""
             INSERT INTO settings (key, value) VALUES ('support_button_text', %s)
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (support_button_text,))
 
         conn.commit()
@@ -3388,7 +3698,7 @@ def vendor_wallet():
         WHERE vendor_id = %s 
           AND status = 'completed'
           AND payment_status = 'paid'
-          AND TO_CHAR(created_at, 'YYYY-MM') = TO_CHAR(NOW(), 'YYYY-MM')
+          AND DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
     """, (user_id,))
     monthly_earnings = cursor.fetchone()['earnings'] or 0
 
@@ -3398,7 +3708,7 @@ def vendor_wallet():
         WHERE vendor_id = %s 
           AND status = 'completed'
           AND payment_status = 'paid'
-          AND TO_CHAR(created_at, 'YYYY-MM') = TO_CHAR(NOW() - INTERVAL '1 month', 'YYYY-MM')
+          AND DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m')
     """, (user_id,))
     last_month_earnings = cursor.fetchone()['earnings'] or 0
 
@@ -3671,9 +3981,8 @@ def vendor_send_message():
         cursor.execute("""
             INSERT INTO conversations (vendor_id, customer_id, last_message, last_message_time, unread)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
-            RETURNING id
         """, (user_id, customer_id, message or '[Attachment]'))
-        conversation_id = cursor.fetchone()['id']
+        conversation_id = cursor.lastrowid
     else:
         conversation_id = conv['id']
         cursor.execute("""
@@ -3729,7 +4038,7 @@ def vendor_customers():
     cursor.execute("""
         SELECT 
             COUNT(DISTINCT customer_id) as total,
-            COUNT(DISTINCT CASE WHEN o.created_at >= NOW() - INTERVAL '30 days' THEN customer_id END) as active_30d
+            COUNT(DISTINCT CASE WHEN o.created_at >= NOW() - INTERVAL 30 DAY THEN customer_id END) as active_30d
         FROM orders o
         WHERE vendor_id = %s
     """, (user_id,))
@@ -3824,15 +4133,15 @@ def vendor_analytics():
     # ===== 1. Monthly sales (last 6 months) =====
     cursor.execute("""
         SELECT 
-            TO_CHAR(created_at, 'YYYY-MM') as month,
+            DATE_FORMAT(created_at, '%Y-%m') as month,
             COUNT(*) as order_count,
             COALESCE(SUM(total_amount), 0) as revenue,
             COALESCE(SUM(vendor_earnings), 0) as earnings
         FROM orders
         WHERE vendor_id = %s 
           AND status = 'completed'
-          AND created_at >= NOW() - INTERVAL '6 months'
-        GROUP BY TO_CHAR(created_at, 'YYYY-MM')
+          AND created_at >= NOW() - INTERVAL 6 MONTH
+        GROUP BY DATE_FORMAT(created_at, '%Y-%m')
         ORDER BY month ASC
     """, (user_id,))
     monthly_data = cursor.fetchall()
@@ -3864,7 +4173,7 @@ def vendor_analytics():
             COALESCE(SUM(total_amount), 0) as revenue
         FROM orders
         WHERE vendor_id = %s AND status = 'completed'
-          AND created_at >= NOW() - INTERVAL '30 days'
+          AND created_at >= NOW() - INTERVAL 30 DAY
         GROUP BY date(created_at)
         ORDER BY day ASC
     """, (user_id,))
@@ -4845,7 +5154,7 @@ def choose_role():
                 cursor.execute('''
                     INSERT INTO customer_profiles (user_id, username)
                     VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO NOTHING
+                    ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
                 ''', (user_id, f'user_{user_id}'))
 
                 # Mark onboarding as complete for customers
@@ -4875,7 +5184,7 @@ def choose_role():
                 cursor.execute('''
                     INSERT INTO vendor_profiles (user_id, business_name, business_slug, business_email)
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (user_id) DO NOTHING
+                    ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
                 ''', (user_id, f'Business_{user_id}', f'business-{user_id}', user['email']))
 
                 # Vendors start onboarding (not complete yet)
@@ -5074,10 +5383,9 @@ def create_community_post():
     cursor.execute("""
         INSERT INTO community_posts (user_id, title, content, category)
         VALUES (%s, %s, %s, %s)
-        RETURNING id
     """, (user_id, title, content, category))
 
-    post_id = cursor.fetchone()['id']
+    post_id = cursor.lastrowid
 
     # Log activity
     log_activity(user_id, 'community_post', f'Created a new post: {title}')
@@ -5155,10 +5463,9 @@ def comment_on_post(post_id):
     cursor.execute("""
         INSERT INTO community_comments (post_id, user_id, content)
         VALUES (%s, %s, %s)
-        RETURNING id
     """, (post_id, user_id, content))
 
-    comment_id = cursor.fetchone()['id']
+    comment_id = cursor.lastrowid
 
     # Get comment with user info
     cursor.execute("""
@@ -5376,7 +5683,6 @@ def vendor_upload_product():
                 is_digital, preview_video, shipping_method, estimated_delivery, shipping_cost
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
         ''', (
             user_id,
             title,
@@ -5395,7 +5701,7 @@ def vendor_upload_product():
             shipping_cost if shipping_cost else 0
         ))
 
-        product_id = cursor.fetchone()['id']
+        product_id = cursor.lastrowid
         conn.commit()
         conn.close()
 
@@ -6142,9 +6448,8 @@ def customer_send_chat_message():
             cursor.execute("""
                 INSERT INTO conversations (vendor_id, customer_id, last_message, last_message_time, unread)
                 VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
-                RETURNING id
             """, (vendor_id, user_id, last_message_preview))
-            conversation_id = cursor.fetchone()['id']
+            conversation_id = cursor.lastrowid
             print(f"🔥 [SEND] Created new conversation: {conversation_id}")
         else:
             conversation_id = conv['id']
@@ -6393,7 +6698,6 @@ def customer_step5():
                     onboarding_completed
                 )
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                RETURNING id
             """, (
                 temp_user['email'],
                 temp_user['password_hash'],
@@ -6409,7 +6713,7 @@ def customer_step5():
                 1
             ))
 
-            user_id = cursor.fetchone()['id']
+            user_id = cursor.lastrowid
 
             cursor.execute("""
                 INSERT INTO customer_profiles (
@@ -6460,7 +6764,7 @@ def customer_step5():
                 'redirect': url_for('verify_email_page')
             })
 
-        except psycopg2.errors.UniqueViolation:
+        except pymysql.err.IntegrityError:
             if conn:
                 conn.rollback()
 
@@ -6817,10 +7121,9 @@ def admin_setup():
                 email, password_hash, full_name, user_type,
                 is_verified, is_active, created_at, updated_at
             ) VALUES (%s, %s, %s, 'admin', 1, 1, NOW(), NOW())
-            RETURNING id
         """, (email, password_hash, full_name))
         # Fetch the returned id – using dict access
-        user_id = cursor.fetchone()['id']
+        user_id = cursor.lastrowid
 
         # Create wallet for admin (optional)
         cursor.execute("""
@@ -7149,7 +7452,6 @@ def vendor_step5():
                     verification_code, verification_code_expires, onboarding_completed
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
             ''', (
                 temp_user['email'],
                 temp_user['password_hash'],
@@ -7165,7 +7467,7 @@ def vendor_step5():
                 1  # onboarding_completed = 1
             ))
 
-            user_id = cursor.fetchone()['id']
+            user_id = cursor.lastrowid
 
             # 2. Create vendor profile
             cursor.execute('''
@@ -7384,11 +7686,18 @@ def checkout(item_type, item_id):
 
     conn.close()
 
+    price = item['price'] or Decimal('0.00')
+    vat = (price * VAT_RATE).quantize(Decimal('0.01'))
+    total_price = price + vat
+
     return render_template(
         'checkout/checkout.html',
         item=dict(item),
         item_type=item_type,
         already_purchased=already_purchased,
+        subtotal=price,
+        vat=vat,
+        total_price=total_price,
         paystack_public_key=PAYSTACK_PUBLIC_KEY
     )
 
@@ -7398,92 +7707,103 @@ def checkout(item_type, item_id):
 def api_initiate_checkout():
     """Initiate checkout - creates a pending purchase and returns Paystack URL"""
     user_id = session.get('user_id')
-    data = request.get_json()
-    item_type = data.get('item_type')
-    item_id = data.get('item_id')
-
-    if item_type not in ['course', 'product']:
-        return jsonify({'success': False, 'message': 'Invalid item type.'}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Get item details
-    if item_type == 'course':
-        cursor.execute("""
-            SELECT id, title, price, vendor_id 
-            FROM courses 
-            WHERE id = %s AND is_active = 1 AND is_approved = 1
-        """, (item_id,))
-    else:
-        cursor.execute("""
-            SELECT id, title, price, vendor_id 
-            FROM products 
-            WHERE id = %s AND is_active = 1 AND is_approved = 1
-        """, (item_id,))
-
-    item = cursor.fetchone()
-
-    if not item:
-        conn.close()
-        return jsonify({'success': False, 'message': 'Item not found.'}), 404
-
-    # Check if already purchased
-    if item_type == 'course':
-        cursor.execute("""
-            SELECT id FROM enrollments 
-            WHERE course_id = %s AND student_id = %s
-        """, (item_id, user_id))
-    else:
-        cursor.execute("""
-            SELECT id FROM purchases 
-            WHERE item_type = 'product' AND item_id = %s AND user_id = %s AND payment_status = 'completed'
-            UNION
-            SELECT id FROM orders
-            WHERE product_id = %s AND customer_id = %s AND status = 'completed' AND payment_status = 'paid'
-        """, (item_id, user_id, item_id, user_id))
-
-    if cursor.fetchone():
-        conn.close()
-        return jsonify({
-            'success': False,
-            'message': 'You already own this item.',
-            'redirect': url_for('course_detail', course_id=item_id) if item_type == 'course' else url_for(
-                'product_detail', product_id=item_id)
-        }), 400
-
-    # Generate transaction reference
-    reference = f"Michie_Bizspark-{secrets.token_hex(12).upper()}"
-
-    # Create pending purchase record
-    cursor.execute("""
-        INSERT INTO purchases (
-            user_id, item_type, item_id, item_title, vendor_id,
-            amount, vendor_earnings, platform_fee, transaction_id, payment_status
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
-        RETURNING id
-    """, (
-        user_id,
-        item_type,
-        item_id,
-        item['title'],
-        item['vendor_id'],
-        item['price'],
-        item['price'] * 0.70,
-        item['price'] * 0.30,
-        reference
-    ))
-
-    purchase_id = cursor.fetchone()['id']
-    conn.commit()
-    conn.close()
-
-    # Initialize Paystack transaction
-    if not PAYSTACK_SECRET_KEY:
-        return jsonify({'success': False, 'message': 'Payment system not configured.'}), 500
-
+    conn = cursor = None
     try:
+        data = request.get_json(silent=True) or {}
+        item_type = data.get('item_type')
+        item_id = data.get('item_id')
+
+        if item_type not in ['course', 'product']:
+            return jsonify({'success': False, 'message': 'Invalid item type.'}), 400
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get item details
+        if item_type == 'course':
+            cursor.execute("""
+                SELECT id, title, price, vendor_id 
+                FROM courses 
+                WHERE id = %s AND is_active = 1 AND is_approved = 1
+            """, (item_id,))
+        else:
+            cursor.execute("""
+                SELECT id, title, price, vendor_id 
+                FROM products 
+                WHERE id = %s AND is_active = 1 AND is_approved = 1
+            """, (item_id,))
+
+        item = cursor.fetchone()
+
+        if not item:
+            return jsonify({'success': False, 'message': 'Item not found.'}), 404
+
+        # Check if already purchased
+        if item_type == 'course':
+            cursor.execute("""
+                SELECT id FROM enrollments 
+                WHERE course_id = %s AND student_id = %s
+            """, (item_id, user_id))
+        else:
+            cursor.execute("""
+                SELECT id FROM purchases 
+                WHERE item_type = 'product' AND item_id = %s AND user_id = %s AND payment_status = 'completed'
+                UNION
+                SELECT id FROM orders
+                WHERE product_id = %s AND customer_id = %s AND status = 'completed' AND payment_status = 'paid'
+            """, (item_id, user_id, item_id, user_id))
+
+        if cursor.fetchone():
+            return jsonify({
+                'success': False,
+                'message': 'You already own this item.',
+                'redirect': url_for('course_detail', course_id=item_id) if item_type == 'course' else url_for(
+                    'product_detail', product_id=item_id)
+            }), 400
+
+        # Decimal-safe pricing: price comes back from Postgres as Decimal,
+        # so every multiplier here must be Decimal too (never a plain
+        # Python float) or this raises TypeError before we ever reach
+        # Paystack. VAT is added here so the amount charged always matches
+        # what's shown to the customer.
+        price = item['price'] or Decimal('0.00')
+        vat = (price * VAT_RATE).quantize(Decimal('0.01'))
+        total_amount = price + vat
+        vendor_earnings = (price * Decimal('0.70')).quantize(Decimal('0.01'))
+        platform_fee = (price * Decimal('0.30')).quantize(Decimal('0.01'))
+
+        # Generate transaction reference
+        reference = f"Michie_Bizspark-{secrets.token_hex(12).upper()}"
+
+        # Create pending purchase record
+        cursor.execute("""
+            INSERT INTO purchases (
+                user_id, item_type, item_id, item_title, vendor_id,
+                amount, vendor_earnings, platform_fee, transaction_id, payment_status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+        """, (
+            user_id,
+            item_type,
+            item_id,
+            item['title'],
+            item['vendor_id'],
+            total_amount,
+            vendor_earnings,
+            platform_fee,
+            reference
+        ))
+
+        purchase_id = cursor.lastrowid
+        conn.commit()
+        cursor.close()
+        conn.close()
+        cursor = conn = None
+
+        # Initialize Paystack transaction
+        if not PAYSTACK_SECRET_KEY:
+            return jsonify({'success': False, 'message': 'Payment system not configured.'}), 500
+
         url = "https://api.paystack.co/transaction/initialize"
         headers = {
             'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
@@ -7492,7 +7812,7 @@ def api_initiate_checkout():
 
         payload = {
             'email': session.get('user_email'),
-            'amount': int(item['price'] * 100),  # Paystack expects amount in kobo
+            'amount': int(total_amount * 100),  # Paystack expects amount in kobo
             'reference': reference,
             'metadata': {
                 'purchase_id': purchase_id,
@@ -7503,14 +7823,17 @@ def api_initiate_checkout():
             'callback_url': f"{BASE_URL}/checkout/verify"
         }
 
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
         result = response.json()
 
         if result.get('status') and result.get('data'):
             return jsonify({
                 'success': True,
                 'authorization_url': result['data']['authorization_url'],
-                'reference': reference
+                'access_code': result['data'].get('access_code'),
+                'reference': reference,
+                'amount': _money(total_amount),
+                'public_key': PAYSTACK_PUBLIC_KEY
             })
         else:
             return jsonify({
@@ -7518,21 +7841,31 @@ def api_initiate_checkout():
                 'message': result.get('message', 'Paystack initialization failed.')
             }), 400
 
-    except Exception as e:
-        print(f"❌ Paystack initialization error: {e}")
-        return jsonify({'success': False, 'message': 'Payment gateway error.'}), 500
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        _log_api_exception(request.path, user_id, item_id, None, exc)
+        return jsonify({
+            'success': False,
+            'error': 'CHECKOUT_INITIATE_FAILED',
+            'message': 'Unable to start checkout. Please try again.',
+            'details': str(exc) if app.debug else None
+        }), 500
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
 
 @app.route('/api/checkout/cart/initiate', methods=['POST'])
 @login_required
 def api_initiate_cart_checkout():
     user_id = session.get('user_id')
-    data = request.get_json()
-    shipping_address = data.get('shipping_address')
-    shipping_cost = data.get('shipping_cost', 0)
-
-    conn = None
+    conn = cursor = None
     try:
+        data = request.get_json(silent=True) or {}
+        shipping_address = data.get('shipping_address')
+        shipping_country = data.get('shipping_country')
+
         conn = get_db_connection()
         cursor = conn.cursor()
 
@@ -7575,7 +7908,31 @@ def api_initiate_cart_checkout():
         if not cart_items:
             return jsonify({'success': False, 'message': 'Cart is empty.'}), 400
 
-        # -------- FIX: Convert Decimal to float for serialization --------
+        has_physical_items = any(
+            item['item_type'] == 'product' and item['is_digital'] == 0
+            for item in cart_items
+        )
+
+        # Shipping cost is looked up server-side from the country the buyer
+        # picked -- never trust a shipping_cost figure sent by the browser,
+        # since that's exactly the kind of client-supplied price the brief
+        # asked us not to trust.
+        shipping_cost = Decimal('0.00')
+        if has_physical_items and shipping_country:
+            shipping_cost = SHIPPING_RATES.get(shipping_country, SHIPPING_RATE_DEFAULT)
+
+        # Decimal-safe pricing shared with the cart page and the checkout
+        # page render, so the amount actually charged always matches what
+        # the customer was shown -- including VAT, which this endpoint
+        # used to drop entirely.
+        pricing = _pricing_breakdown(cart_items, shipping_cost)
+        total_amount = pricing['total']
+        vendor_earnings = (total_amount * Decimal('0.70')).quantize(Decimal('0.01'))
+        platform_fee = (total_amount * Decimal('0.30')).quantize(Decimal('0.01'))
+
+        # Cart item snapshot for the purchases.metadata JSON column --
+        # Decimal isn't JSON-serializable, so convert to float here only,
+        # never for the actual money math above.
         cart_items_serializable = []
         for item in cart_items:
             d = dict(item)
@@ -7584,14 +7941,9 @@ def api_initiate_cart_checkout():
                     d[key] = float(value)
             cart_items_serializable.append(d)
 
-        # Calculate total using float values
-        subtotal = sum(float(item['price']) * item['quantity'] for item in cart_items)
-        total_amount = subtotal + float(shipping_cost)
-
         # Generate transaction reference
         reference = f"Michie_Bizspark-{secrets.token_hex(12).upper()}"
 
-        # -------- FIX: Use user_id as vendor_id (satisfies foreign key) --------
         cursor.execute("""
             INSERT INTO purchases (
                 user_id, item_type, item_id, item_title, vendor_id,
@@ -7599,29 +7951,35 @@ def api_initiate_cart_checkout():
                 shipping_address, metadata
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
-            RETURNING id
         """, (
             user_id,
             'cart',
             0,
             'Cart Purchase (Multiple Items)',
-            user_id,            # <-- use buyer's ID to satisfy FK
+            user_id,            # buyer's own ID, to satisfy the vendor_id FK on a mixed-vendor cart order
             total_amount,
-            total_amount * 0.70,
-            total_amount * 0.30,
+            vendor_earnings,
+            platform_fee,
             reference,
             shipping_address,
-            json.dumps(cart_items_serializable)
+            json.dumps({
+                'items': cart_items_serializable,
+                'subtotal': float(pricing['subtotal']),
+                'vat': float(pricing['vat']),
+                'shipping': float(pricing['shipping']),
+            })
         ))
 
-        purchase_id = cursor.fetchone()['id']
+        purchase_id = cursor.lastrowid
         conn.commit()
 
-        # Close connection before making external request
+        # Close the DB connection before making the external Paystack
+        # request -- no reason to hold it open (or any lock) while we
+        # wait on a third-party HTTP call.
+        cursor.close()
         conn.close()
-        conn = None
+        cursor = conn = None
 
-        # Initialize Paystack
         if not PAYSTACK_SECRET_KEY:
             return jsonify({'success': False, 'message': 'Payment system not configured.'}), 500
 
@@ -7644,14 +8002,20 @@ def api_initiate_cart_checkout():
             'callback_url': f"{BASE_URL}/checkout/cart/verify"
         }
 
-        response = requests.post(url, json=payload, headers=headers, verify=verify_ssl)
+        response = requests.post(url, json=payload, headers=headers, verify=verify_ssl, timeout=15)
         result = response.json()
 
         if result.get('status') and result.get('data'):
             return jsonify({
                 'success': True,
                 'authorization_url': result['data']['authorization_url'],
-                'reference': reference
+                'access_code': result['data'].get('access_code'),
+                'reference': reference,
+                'amount': _money(total_amount),
+                'subtotal': _money(pricing['subtotal']),
+                'vat': _money(pricing['vat']),
+                'shipping': _money(pricing['shipping']),
+                'public_key': PAYSTACK_PUBLIC_KEY
             })
         else:
             return jsonify({
@@ -7659,13 +8023,20 @@ def api_initiate_cart_checkout():
                 'message': result.get('message', 'Paystack initialization failed.')
             }), 400
 
-    except Exception as e:
-        print(f"❌ Paystack initialization error: {e}")
-        return jsonify({'success': False, 'message': 'Payment gateway error.'}), 500
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        _log_api_exception(request.path, user_id, None, None, exc)
+        return jsonify({
+            'success': False,
+            'error': 'CHECKOUT_INITIATE_FAILED',
+            'message': 'Unable to start checkout. Please try again.',
+            'details': str(exc) if app.debug else None
+        }), 500
 
     finally:
-        if conn:
-            conn.close()
+        if cursor: cursor.close()
+        if conn: conn.close()
 
 
 
@@ -7738,7 +8109,6 @@ def verify_payment():
                     customer_name, customer_email
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
-                RETURNING id
             """, (
                 order_number,
                 user_id,
@@ -7757,7 +8127,7 @@ def verify_payment():
                 session.get('user_email', '')
             ))
 
-            order_id = cursor.fetchone()['id']
+            order_id = cursor.lastrowid
 
             # --- Credit vendor wallet (70% earnings) ---
             # IMPORTANT: use the *_with_conn variant on the SAME connection/
@@ -8669,7 +9039,6 @@ def vendor_create_course():
                 is_digital
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
         ''', (
             user_id,
             title,
@@ -8684,7 +9053,7 @@ def vendor_create_course():
             is_digital
         ))
 
-        course_id = cursor.fetchone()['id']
+        course_id = cursor.lastrowid
         conn.commit()
         conn.close()
 
@@ -8993,13 +9362,12 @@ def vendor_create_lesson():
                 order_index, video_url, video_file, is_free
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
         ''', (course_id, title, description, duration, order_index,
               video_url if not has_video_file else None,
               video_file_url,
               is_free))
 
-        lesson_id = cursor.fetchone()['id']
+        lesson_id = cursor.lastrowid
         print(f"✅ Lesson {lesson_id} created with video_file: {video_file_url}")
 
         cursor.execute('''
@@ -10453,217 +10821,108 @@ def inbox():
     )
 
 # ============================================
-# MARKETPLACE ROUTES (Placeholder)
 # ============================================
+# MARKETPLACE ROUTES
+# ============================================
+
+
+def _marketplace_product_query(search=None, category=None):
+    clauses = ["p.is_active = 1", "p.is_approved = 1"]
+    params = []
+    if search:
+        clauses.append("(p.title LIKE %s OR COALESCE(p.description, '') LIKE %s OR COALESCE(p.category, '') LIKE %s OR COALESCE(v.business_name, u.full_name, '') LIKE %s)")
+        like = f'%{search}%'; params.extend([like, like, like, like])
+    if category:
+        clauses.append('p.category = %s'); params.append(category)
+    query = f'''SELECT p.id, p.title, p.description, p.category, p.price, p.cover_image,
+                       p.product_type, p.rating, p.reviews_count, p.is_digital,
+                       p.stock_quantity, p.created_at, p.vendor_id,
+                       COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor') AS vendor_name
+                FROM products p
+                JOIN users u ON p.vendor_id = u.id
+                LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY p.is_featured DESC, p.created_at DESC'''
+    return query, params
+
 
 @app.route('/marketplace')
 @login_required
 def marketplace():
-    """Marketplace page - shows all approved products and courses"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # ===== GET ALL APPROVED PRODUCTS =====
-    cursor.execute("""
-        SELECT 
-            p.id,
-            p.title,
-            p.description,
-            p.category,
-            p.price,
-            p.cover_image,
-            p.product_type,
-            p.rating,
-            v.business_name as vendor_name,
-            v.user_id as vendor_id
-        FROM products p
-        JOIN vendor_profiles v ON p.vendor_id = v.user_id
-        WHERE p.status = 'approved'
-        ORDER BY p.created_at DESC
-    """)
-    products = cursor.fetchall()
-
-    # ===== GET ALL APPROVED COURSES =====
-    cursor.execute("""
-        SELECT 
-            c.id,
-            c.title,
-            c.description,
-            c.category,
-            c.level,
-            c.price,
-            c.cover_image,
-            c.promo_video,
-            c.rating,
-            c.enrolled_students,
-            v.business_name as vendor_name,
-            v.user_id as vendor_id
-        FROM courses c
-        JOIN vendor_profiles v ON c.vendor_id = v.user_id
-        WHERE c.status = 'approved'
-        ORDER BY c.created_at DESC
-    """)
-    courses = cursor.fetchall()
-
-    conn.close()
-
-    return render_template(
-        'dashboard/customer/marketplace.html',
-        products=products,
-        courses=courses
-    )
-
+    conn = cursor = None
+    try:
+        search = request.args.get('q', '').strip()[:120]
+        category = request.args.get('category', '').strip()[:100]
+        conn = get_db_connection(); cursor = conn.cursor()
+        query, params = _marketplace_product_query(search, category)
+        cursor.execute(query, params); products = [dict(row) for row in cursor.fetchall()]
+        cursor.execute("SELECT DISTINCT category FROM products WHERE is_active = 1 AND is_approved = 1 AND category IS NOT NULL AND category <> '' ORDER BY category")
+        categories = [row['category'] for row in cursor.fetchall()]
+        return render_template('marketplace.html', products=products, categories=categories, search=search, selected_category=category)
+    except Exception as exc:
+        app.logger.exception('marketplace_load_error endpoint=%s user_id=%s error_type=%s message=%s', request.path, _api_user_id(), type(exc).__name__, str(exc))
+        flash('Marketplace could not be loaded. See the Flask terminal for the exact database error.', 'error')
+        return render_template('marketplace.html', products=[], categories=[], search='', selected_category='', page_error='Marketplace load failed.'), 500
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
 
 @app.route('/api/marketplace/search')
 @login_required
 def marketplace_search():
-    q = request.args.get('q', '').strip().lower()
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # ===== SEARCH PRODUCTS =====
-    cursor.execute("""
-        SELECT 
-            p.id,
-            p.title,
-            p.description,
-            p.category,
-            p.price,
-            p.cover_image,
-            p.product_type,
-            p.rating,
-            v.business_name as vendor_name,
-            v.user_id as vendor_id
-        FROM products p
-        JOIN vendor_profiles v ON p.vendor_id = v.user_id
-        WHERE p.is_active = 1 AND p.is_approved = 1
-          AND (
-            LOWER(p.title) LIKE %s
-            OR LOWER(p.description) LIKE %s
-            OR LOWER(p.category) LIKE %s
-            OR LOWER(v.business_name) LIKE %s
-          )
-        ORDER BY p.created_at DESC
-    """, (f'%{q}%', f'%{q}%', f'%{q}%', f'%{q}%'))
-    products = cursor.fetchall()
-
-    # ===== SEARCH COURSES =====
-    cursor.execute("""
-        SELECT 
-            c.id,
-            c.title,
-            c.description,
-            c.category,
-            c.level,
-            c.price,
-            c.cover_image,
-            c.promo_video,
-            c.rating,
-            c.enrolled_students,
-            v.business_name as vendor_name,
-            v.user_id as vendor_id
-        FROM courses c
-        JOIN vendor_profiles v ON c.vendor_id = v.user_id
-        WHERE c.is_active = 1 AND c.is_approved = 1
-          AND (
-            LOWER(c.title) LIKE %s
-            OR LOWER(c.description) LIKE %s
-            OR LOWER(c.category) LIKE %s
-            OR LOWER(v.business_name) LIKE %s
-          )
-        ORDER BY c.created_at DESC
-    """, (f'%{q}%', f'%{q}%', f'%{q}%', f'%{q}%'))
-    courses = cursor.fetchall()
-
-    conn.close()
-
-    return jsonify({
-        'products': [dict(p) for p in products],
-        'courses': [dict(c) for c in courses]
-    })
-
+    conn = cursor = None
+    try:
+        search = request.args.get('q', '').strip()[:120]
+        category = request.args.get('category', '').strip()[:100]
+        conn = get_db_connection(); cursor = conn.cursor()
+        query, params = _marketplace_product_query(search, category)
+        cursor.execute(query, params)
+        products = []
+        for row in cursor.fetchall():
+            item = dict(row); item.pop('created_at', None); item['price'] = _money(item['price']); products.append(item)
+        return _api_success('Marketplace results loaded.', {'products': products, 'count': len(products)})
+    except Exception as exc:
+        _log_api_exception(request.path, _api_user_id(), None, None, exc)
+        return _api_error('MARKETPLACE_SEARCH_FAILED', 'Unable to search the marketplace.', 500, exc)
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
 
 @app.route('/products')
 @login_required
 def products():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.id, p.title, p.price, p.cover_image, p.category, v.business_name as vendor_name
-        FROM products p
-        JOIN vendor_profiles v ON p.vendor_id = v.user_id
-        WHERE p.status = 'approved'
-        ORDER BY p.created_at DESC
-    """)
-    products = cursor.fetchall()
-    conn.close()
-    return render_template('dashboard/customer/products.html', products=products)
-
+    return marketplace()
 
 
 @app.route('/product/<int:product_id>')
+@login_required
 def product_detail(product_id):
-    """Display a single product's details (public view)"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.*, u.full_name as vendor_name, vp.business_name
-        FROM products p
-        LEFT JOIN users u ON p.vendor_id = u.id
-        LEFT JOIN vendor_profiles vp ON u.id = vp.user_id
-        WHERE p.id = %s AND p.is_active = 1 AND p.is_approved = 1 AND p.status = 'approved'
-    """, (product_id,))
-    product = cursor.fetchone()
-
-    if not product:
-        conn.close()
-        flash('Product not found or not available.', 'error')
-        return redirect(url_for('index'))
-
-    product = dict(product)
-
-    # Fetch reviews for this product
-    cursor.execute("""
-        SELECT r.*, u.full_name as customer_name
-        FROM reviews r
-        JOIN users u ON r.customer_id = u.id
-        WHERE r.product_id = %s
-        ORDER BY r.created_at DESC
-    """, (product_id,))
-    reviews = cursor.fetchall()
-
-    # Fetch existing chat history between the logged-in customer and this vendor
-    chat_messages = []
-    user_id = session.get('user_id')
-    if user_id:
-        cursor.execute("""
-            SELECT id FROM conversations
-            WHERE vendor_id = %s AND customer_id = %s
-        """, (product['vendor_id'], user_id))
-        conv = cursor.fetchone()
-        if conv:
-            cursor.execute("""
-                SELECT * FROM messages
-                WHERE conversation_id = %s
-                ORDER BY created_at ASC
-            """, (conv['id'],))
-            chat_messages = cursor.fetchall()
-
-    conn.close()
-
-    return render_template(
-        'dashboard/customer/product-detail.html',
-        product=product,
-        reviews=reviews,
-        chat_messages=chat_messages,
-        user={'id': user_id}
-    )
-
-
-
+    conn = cursor = None
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute('''SELECT p.*, COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor') AS vendor_name,
+                                 v.business_description, v.logo_url
+                          FROM products p JOIN users u ON p.vendor_id = u.id
+                          LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
+                          WHERE p.id = %s AND p.is_active = 1 AND p.is_approved = 1 ''', (product_id,))
+        product = cursor.fetchone()
+        if not product:
+            flash('Product not found or not available.', 'error')
+            return redirect(url_for('marketplace'))
+        cursor.execute('''SELECT r.rating, r.comment, r.created_at, COALESCE(u.full_name, 'Customer') AS customer_name
+                          FROM reviews r LEFT JOIN users u ON r.customer_id = u.id
+                          WHERE r.product_id = %s AND COALESCE(r.is_approved, 1) = 1 ORDER BY r.created_at DESC''', (product_id,))
+        reviews = cursor.fetchall()
+        return render_template('product-detail.html', product=dict(product), reviews=reviews)
+    except Exception as exc:
+        app.logger.exception('product_detail_error endpoint=%s user_id=%s product_id=%s error_type=%s message=%s', request.path, _api_user_id(), product_id, type(exc).__name__, str(exc))
+        flash('Product detail could not be loaded. See the Flask terminal for the exact database error.', 'error')
+        return redirect(url_for('marketplace'))
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
 
 
 @app.route('/learning/<int:course_id>/download-all')
@@ -10972,9 +11231,8 @@ def send_chat_message():
         cursor.execute("""
             INSERT INTO conversations (vendor_id, customer_id, last_message, last_message_time, unread)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
-            RETURNING id
         """, (vendor_id, user_id, message))
-        conversation_id = cursor.fetchone()['id']
+        conversation_id = cursor.lastrowid
     else:
         conversation_id = conv['id']
         cursor.execute("""
@@ -10984,7 +11242,7 @@ def send_chat_message():
         """, (message, conversation_id))
 
     # ===== Insert message using the CORRECT schema =====
-    cursor.execute
+    cursor.execute("""
         INSERT INTO messages (conversation_id, sender_id, receiver_id, text, type, is_read)
         VALUES (%s, %s, %s, %s, 'sent', 0)
     """, (conversation_id, user_id, vendor_id, message))

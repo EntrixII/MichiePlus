@@ -1,69 +1,31 @@
-import sqlite3
 import os
+import pymysql
 
 
 def create_database():
-    # Path to your database file
-    db_path = 'bizspark.db'
+    host = os.environ.get("MYSQL_HOST", "localhost")
+    port = int(os.environ.get("MYSQL_PORT", "3306"))
+    user = os.environ.get("MYSQL_USER", "root")
+    password = os.environ.get("MYSQL_PASSWORD", "")
+    database = os.environ.get("MYSQL_DATABASE", "bizspark")
 
-    # Remove existing database if it exists (optional)
-    if os.path.exists(db_path):
-        os.remove(db_path)
-        print(f"Removed existing database: {db_path}")
+    conn = pymysql.connect(host=host, port=port, user=user, password=password,
+                           charset="utf8mb4", autocommit=True)
+    with conn.cursor() as cursor:
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+    conn.select_db(database)
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "database_mysql.sql"), encoding="utf-8") as f:
+            schema=f.read()
+        with conn.cursor() as cursor:
+            for statement in schema.split(";"):
+                statement=statement.strip()
+                if statement:
+                    cursor.execute(statement)
+        print("✅ MySQL database created successfully")
+    finally:
+        conn.close()
 
-    # Read the schema file
-    with open('database.sqlite.sql', 'r') as f:
-        schempa = f.read()
-
-    # Create connection and execute schema
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    # Execute each statement separately (SQLite doesn't support multiple statements with ";" in one execute)
-    statements = schema.split(';')
-    for statement in statements:
-        statement = statement.strip()
-        if statement:
-            try:
-                cursor.execute(statement)
-            except sqlite3.Error as e:
-                print(f"Error executing: {statement[:50]}...")
-                print(f"Error: {e}")
-
-    conn.commit()
-    conn.close()
-
-    print(f"✅ Database created successfully: {db_path}")
-    print(f"📊 Tables created: users, customer_profiles, vendor_profiles, password_resets, sessions, audit_logs")
-    print("👤 Test users created: test@example.com, vendor@example.com, admin@example.com")
-
-
-def add_preferences_column():
-    db_path = os.path.join(os.path.dirname(__file__), 'bizspark.db')
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    # Check if preferences column exists
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [col[1] for col in cursor.fetchall()]
-
-    if 'preferences' not in columns:
-        print("Adding 'preferences' column to users table...")
-        cursor.execute("ALTER TABLE users ADD COLUMN preferences TEXT DEFAULT '{}'")
-        print("✅ preferences column added")
-    else:
-        print("✅ preferences column already exists")
-
-    # Check if timezone column exists
-    if 'timezone' not in columns:
-        print("Adding 'timezone' column to users table...")
-        cursor.execute("ALTER TABLE users ADD COLUMN timezone VARCHAR(50) DEFAULT 'UTC'")
-        print("✅ timezone column added")
-
-    conn.commit()
-    conn.close()
-    print("✅ Database updated successfully!")
 
 if __name__ == "__main__":
     create_database()
