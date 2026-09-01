@@ -66,7 +66,7 @@ requests.Session.request = _patched_request
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-print("⚠️ SSL verification disabled for development")
+print("warning: SSL verification disabled for development")
 # ------------------------------------------------
 
 
@@ -89,7 +89,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 # --------------------------------
 
 if os.environ.get('FLASK_ENV') != 'production':
-    print("⚠️ SSL verification disabled for development")
+    print("warning: SSL verification disabled for development")
 
 
 
