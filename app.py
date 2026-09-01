@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, send_from_directory, send_file
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, send_from_directory, \
+    send_file
 from flask_session import Session
 import traceback
 from flask import make_response
@@ -32,8 +33,6 @@ from flask_dance.consumer import oauth_authorized, oauth_error
 # Load environment variables
 load_dotenv()
 
-
-
 app = Flask(__name__)
 
 # Configuration
@@ -44,62 +43,66 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 app.config['SESSION_PERMANENT'] = True
 Session(app)
 
-
-
 # --- FORCE HTTP FOR OAUTH (DEVELOPMENT ONLY) ---
 import os
+
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 # Disable SSL verification globally
 import ssl
+
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # Patch requests to skip verification
 import requests
+
 _original_request = requests.Session.request
+
 
 def _patched_request(self, *args, **kwargs):
     kwargs['verify'] = False
     return _original_request(self, *args, **kwargs)
 
+
 requests.Session.request = _patched_request
 
 import urllib3
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-print("warning: SSL verification disabled for development")
+print("⚠️ SSL verification disabled for development")
 # ------------------------------------------------
 
 
-
 old_request = requests.Session.request
+
 
 # --- SSL FIX FOR DEVELOPMENT ---
 def new_request(self, *args, **kwargs):
     kwargs['verify'] = False
     return old_request(self, *args, **kwargs)
 
+
 old_request = requests.Session.request
 requests.Session.request = new_request
 
 import urllib3
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import ssl
+
 ssl._create_default_https_context = ssl._create_unverified_context
 # --------------------------------
 
 if os.environ.get('FLASK_ENV') != 'production':
-    print("warning: SSL verification disabled for development")
-
-
-
+    print("⚠️ SSL verification disabled for development")
 
 # ============================================
 # OAUTH CONFIGURATION - GOOGLE
 # ============================================
 
-# Database configuration - PostgreSQL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'mysql://root:@localhost:3306/bizspark')
+# Database configuration - MySQL
+DATABASE_URL = os.environ.get('DATABASE_URL', 'mysql://root:@localhost:3306/MichiePlus')
 
 # ============================================
 # OAUTH CONFIGURATION - GOOGLE
@@ -153,7 +156,6 @@ else:
 PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY', '')
 PAYSTACK_PUBLIC_KEY = os.environ.get('PAYSTACK_PUBLIC_KEY', '')
 
-
 # ============================================
 # EMAIL CONFIGURATION
 # ============================================
@@ -163,9 +165,6 @@ EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
 EMAIL_FROM = os.environ.get('EMAIL_FROM', EMAIL_USER)
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
-
-
-
 
 # File upload configuration
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
@@ -278,6 +277,7 @@ def require_turnstile(f):
     - Never trusts the frontend widget alone - always calls Cloudflare's
       verification endpoint server-side.
     """
+
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if request.method != 'POST':
@@ -318,7 +318,7 @@ limiter = Limiter(
 def ratelimit_handler(e):
     """Return JSON for API/fetch clients, and a normal error page for browser navigations."""
     wants_json = request.is_json or request.path.startswith('/api/') or \
-        request.accept_mimetypes.best == 'application/json'
+                 request.accept_mimetypes.best == 'application/json'
     if wants_json:
         return jsonify({
             'success': False,
@@ -371,19 +371,23 @@ def favicon():
 
 def get_db_connection(timeout=15, statement_timeout_ms=15000, lock_timeout_ms=5000):
     """Create a MySQL connection while preserving the existing caller API."""
-    url = DATABASE_URL[7:] if DATABASE_URL.startswith("mysql://") else DATABASE_URL
-    auth_host, database = url.split("/", 1)
-    auth, host_port = auth_host.rsplit("@", 1) if "@" in auth_host else ("", auth_host)
-    username, password = auth.split(":", 1) if ":" in auth else (auth, "")
-    database = database.split("?", 1)[0]
-    if ":" in host_port:
-        host, port = host_port.rsplit(":", 1); port = int(port)
-    else:
-        host, port = host_port, 3306
-    return pymysql.connect(host=host or "localhost", port=port, user=username or "root",
-                           password=password, database=database or "bizspark",
-                           connect_timeout=timeout, cursorclass=DictCursor,
-                           autocommit=False, charset="utf8mb4")
+    from urllib.parse import urlparse
+    raw_url = DATABASE_URL
+    if not raw_url.startswith(('mysql://', 'mysql+pymysql://')):
+        raise RuntimeError("DATABASE_URL must use mysql:// for the MySQL configuration.")
+    parsed = urlparse(raw_url)
+    return pymysql.connect(
+        host=parsed.hostname or 'localhost',
+        port=parsed.port or 3306,
+        user=parsed.username or 'root',
+        password=parsed.password or '',
+        database=(parsed.path or '/MichiePlus').lstrip('/'),
+        connect_timeout=timeout,
+        cursorclass=DictCursor,
+        autocommit=False,
+        charset='utf8mb4'
+    )
+
 
 def update_moderation_status(model, item_id, new_status, admin_id=None, rejection_reason=None):
     """
@@ -461,6 +465,7 @@ def update_vendor_verification(vendor_id, new_status, rejection_reason=None):
     cursor.execute(query, params)
     conn.commit()
     conn.close()
+
 
 def send_vendor_notification(vendor_email, vendor_name, subject, message, action_type):
     """Send a notification email to a vendor about admin actions."""
@@ -572,7 +577,7 @@ def init_db():
     # ============================================
     # USERS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='users'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='users'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE users (
@@ -623,7 +628,7 @@ def init_db():
     # ============================================
     # CUSTOMER PROFILES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='customer_profiles'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='customer_profiles'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE customer_profiles (
@@ -652,7 +657,7 @@ def init_db():
     # ============================================
     # VENDOR PROFILES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='vendor_profiles'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='vendor_profiles'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE vendor_profiles (
@@ -717,7 +722,7 @@ def init_db():
     # ============================================
     # PASSWORD RESETS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='password_resets'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='password_resets'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE password_resets (
@@ -737,7 +742,7 @@ def init_db():
     # ============================================
     # SESSIONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='sessions'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='sessions'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE sessions (
@@ -755,7 +760,7 @@ def init_db():
     # ============================================
     # AUDIT LOGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='audit_logs'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='audit_logs'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE audit_logs (
@@ -774,7 +779,7 @@ def init_db():
     # ============================================
     # PRODUCTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='products'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='products'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE products (
@@ -829,7 +834,7 @@ def init_db():
     # ============================================
     # COURSES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='courses'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='courses'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE courses (
@@ -876,7 +881,7 @@ def init_db():
     # ============================================
     # LESSONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='lessons'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='lessons'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE lessons (
@@ -903,7 +908,7 @@ def init_db():
     # ============================================
     # ENROLLMENTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='enrollments'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='enrollments'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE enrollments (
@@ -925,7 +930,7 @@ def init_db():
     # ============================================
     # ORDERS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='orders'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='orders'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE orders (
@@ -961,7 +966,7 @@ def init_db():
     # ============================================
     # ORDER ITEMS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='order_items'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='order_items'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE order_items (
@@ -982,7 +987,7 @@ def init_db():
     # ============================================
     # CONVERSATIONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='conversations'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='conversations'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE conversations (
@@ -1003,7 +1008,7 @@ def init_db():
     # ============================================
     # MESSAGES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='messages'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='messages'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE messages (
@@ -1030,7 +1035,7 @@ def init_db():
     # ============================================
     # TRANSACTIONS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='transactions'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='transactions'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE transactions (
@@ -1053,7 +1058,7 @@ def init_db():
     # ============================================
     # WALLET TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='wallet'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='wallet'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE wallet (
@@ -1073,7 +1078,7 @@ def init_db():
     # ============================================
     # PAYOUT REQUESTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='payout_requests'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='payout_requests'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE payout_requests (
@@ -1101,7 +1106,7 @@ def init_db():
     # ============================================
     # REVIEWS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='reviews'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='reviews'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE reviews (
@@ -1129,7 +1134,7 @@ def init_db():
     # ============================================
     # SAVED ITEMS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='saved_items'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='saved_items'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE saved_items (
@@ -1147,7 +1152,7 @@ def init_db():
     # ============================================
     # ACTIVITY LOG TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='activity_log'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='activity_log'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE activity_log (
@@ -1165,7 +1170,7 @@ def init_db():
     # ============================================
     # PURCHASES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='purchases'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='purchases'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE purchases (
@@ -1200,7 +1205,7 @@ def init_db():
     # ============================================
     # DOWNLOADS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='downloads'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='downloads'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE downloads (
@@ -1219,7 +1224,7 @@ def init_db():
     # ============================================
     # CART TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='cart'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='cart'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE cart (
@@ -1238,7 +1243,7 @@ def init_db():
     # ============================================
     # COMMUNITY POSTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='community_posts'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='community_posts'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE community_posts (
@@ -1260,7 +1265,7 @@ def init_db():
     # ============================================
     # COMMUNITY LIKES TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='community_likes'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='community_likes'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE community_likes (
@@ -1278,7 +1283,7 @@ def init_db():
     # ============================================
     # COMMUNITY COMMENTS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='community_comments'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='community_comments'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE community_comments (
@@ -1296,7 +1301,7 @@ def init_db():
     # ============================================
     # ADMIN LOGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='admin_logs'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='admin_logs'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE admin_logs (
@@ -1314,7 +1319,7 @@ def init_db():
     # ============================================
     # EMAIL LOGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='email_logs'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='email_logs'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE email_logs (
@@ -1332,18 +1337,20 @@ def init_db():
     # ============================================
     # SETTINGS TABLE
     # ============================================
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name='settings'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='settings'")
     if not cursor.fetchone():
         cursor.execute('''
             CREATE TABLE settings (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                `key` VARCHAR(100) UNIQUE NOT NULL,
+                key VARCHAR(100) UNIQUE NOT NULL,
                 value TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        cursor.execute("INSERT IGNORE INTO settings (`key`, `value`) VALUES ('commission_rate', '30')")
-        cursor.execute("INSERT IGNORE INTO settings (`key`, `value`) VALUES ('min_withdrawal', '5000')")
+        cursor.execute(
+            "INSERT INTO settings (`key`, value) VALUES ('commission_rate', '30') ON DUPLICATE KEY UPDATE `key` = `key`")
+        cursor.execute(
+            "INSERT INTO settings (`key`, value) VALUES ('min_withdrawal', '5000') ON DUPLICATE KEY UPDATE `key` = `key`")
         print("✅ settings table created with defaults")
 
     # ============================================
@@ -1372,12 +1379,25 @@ def init_db():
     # CREATE INDEXES FOR PERFORMANCE
     # ============================================
     # Only create indexes if the columns exist
-    if column_exists(cursor, 'products', 'status'):
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)")
-    if column_exists(cursor, 'courses', 'status'):
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status)")
-    if column_exists(cursor, 'vendor_profiles', 'verification_status'):
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vendor_profiles_verification_status ON vendor_profiles(verification_status)")
+    def create_index_if_missing(index_name, table_name, column_name):
+        if not column_exists(cursor, table_name, column_name):
+            return
+        try:
+            cursor.execute(
+                f"CREATE INDEX `{index_name}` ON `{table_name}` (`{column_name}`)"
+            )
+        except pymysql.err.OperationalError as e:
+            # MySQL error 1061 means the index already exists.
+            if e.args and e.args[0] != 1061:
+                raise
+
+    create_index_if_missing('idx_products_status', 'products', 'status')
+    create_index_if_missing('idx_courses_status', 'courses', 'status')
+    create_index_if_missing(
+        'idx_vendor_profiles_verification_status',
+        'vendor_profiles',
+        'verification_status'
+    )
 
     # ============================================
     # COMMIT AND CLOSE
@@ -1385,6 +1405,7 @@ def init_db():
     conn.commit()
     conn.close()
     print("✅ Database initialized successfully with all tables and columns")
+
 
 def sync_vendor_wallet(user_id):
     """
@@ -1538,7 +1559,8 @@ def sync_vendor_wallet_with_conn(conn, user_id):
 def create_paystack_recipient(vendor_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT bank_name, bank_account_number, bank_account_name FROM vendor_profiles WHERE user_id = %s", (vendor_id,))
+    cursor.execute("SELECT bank_name, bank_account_number, bank_account_name FROM vendor_profiles WHERE user_id = %s",
+                   (vendor_id,))
     vendor = cursor.fetchone()
     if not vendor:
         return None
@@ -1576,7 +1598,8 @@ def create_paystack_recipient(vendor_id):
         if result.get('status'):
             recipient_code = result['data']['recipient_code']
             # Save to vendor profile
-            cursor.execute("UPDATE vendor_profiles SET paystack_recipient_code = %s WHERE user_id = %s", (recipient_code, vendor_id))
+            cursor.execute("UPDATE vendor_profiles SET paystack_recipient_code = %s WHERE user_id = %s",
+                           (recipient_code, vendor_id))
             conn.commit()
             conn.close()
             return recipient_code
@@ -1588,7 +1611,6 @@ def create_paystack_recipient(vendor_id):
         print(f"Error creating recipient: {e}")
         conn.close()
         return None
-
 
 
 # ============================================
@@ -1622,7 +1644,7 @@ def check_username():
     if not username or len(username) < 3:
         return jsonify({'available': False, 'message': 'Username too short'})
 
-    user_id = session.get('user_id')   # <-- moved here
+    user_id = session.get('user_id')  # <-- moved here
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1663,14 +1685,15 @@ def log_activity(user_id, action, description, metadata=None):
     conn.commit()
     conn.close()
 
+
 def generate_secure_token():
     """Generate a cryptographically secure token (64+ characters)"""
     return secrets.token_urlsafe(48)  # 64 characters
 
+
 def hash_token(token):
     """Hash the token using SHA-256"""
     return hashlib.sha256(token.encode()).hexdigest()
-
 
 
 # ============================================
@@ -1752,6 +1775,7 @@ def handle_oauth_user(email, full_name, provider, provider_id):
                 onboarding_completed
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+
         ''', (
             email,
             full_name,
@@ -1766,6 +1790,11 @@ def handle_oauth_user(email, full_name, provider, provider_id):
             0  # onboarding not complete yet
         ))
 
+        user_id = cursor.lastrowid
+        cursor.execute(
+            "SELECT id, email, full_name, user_type, is_verified, auth_provider, onboarding_completed "
+            "FROM users WHERE id = %s", (user_id,)
+        )
         user = cursor.fetchone()
         conn.commit()
 
@@ -1922,9 +1951,9 @@ def vendor_dashboard():
     tin_added = bool(vendor_dict.get('tin'))
     has_products = product_count > 0
     store_published = (
-        user_dict.get('onboarding_completed', 0) == 1 and
-        has_products and
-        vendor_dict.get('is_active', 0) == 1
+            user_dict.get('onboarding_completed', 0) == 1 and
+            has_products and
+            vendor_dict.get('is_active', 0) == 1
     )
 
     completed_steps = sum([
@@ -2323,6 +2352,7 @@ def vendor_edit_product(product_id):
         product=product_dict
     )
 
+
 # ============================================
 # VENDOR TERMS & TIN ROUTES
 # ============================================
@@ -2362,7 +2392,7 @@ def _log_api_exception(endpoint, user_id=None, product_id=None, quantity=None, e
 
 
 def _is_lock_contention_error(exc):
-    """True if exc is Postgres refusing to wait any longer for a lock
+    """True if exc is MySQL refusing to wait any longer for a lock
     (lock_timeout) or a query that ran past statement_timeout. These are
     expected under concurrent cart updates and should be reported to the
     browser as a clean, retryable conflict -- not a generic 500."""
@@ -2521,15 +2551,17 @@ def add_to_cart():
             conn.rollback()
             return _api_error('INSUFFICIENT_STOCK', f'Only {item["stock_quantity"]} units are available.', 400)
         if existing:
-            cursor.execute('UPDATE cart SET quantity = %s, added_at = CURRENT_TIMESTAMP WHERE id = %s', (new_quantity, existing['id']))
+            cursor.execute('UPDATE cart SET quantity = %s, added_at = CURRENT_TIMESTAMP WHERE id = %s',
+                           (new_quantity, existing['id']))
             cart_id = existing['id']
         else:
             cursor.execute('''INSERT INTO cart (user_id, item_type, item_id, quantity)
-                              VALUES (%s, %s, %s, %s)''', (user_id, item_type, product_id, new_quantity))
+                              VALUES (%s, %s, %s, %s) ''', (user_id, item_type, product_id, new_quantity))
             cart_id = cursor.lastrowid
         count = _cart_count(cursor, user_id)
         conn.commit()
-        return _api_success('Item added to cart.', {'cart_id': cart_id, 'item_type': item_type, 'item_id': product_id, 'quantity': new_quantity, 'cart_count': count})
+        return _api_success('Item added to cart.', {'cart_id': cart_id, 'item_type': item_type, 'item_id': product_id,
+                                                    'quantity': new_quantity, 'cart_count': count})
     except ValueError as exc:
         if conn: conn.rollback()
         return _api_error('INVALID_REQUEST', str(exc), 400)
@@ -2566,7 +2598,9 @@ def get_cart():
             item['line_total'] = _money(line_total)
             items.append(item)
         pricing = _pricing_breakdown(rows)
-        return _api_success('Cart loaded.', {'items': items, 'count': sum(int(row['quantity']) for row in rows), 'subtotal': _money(pricing['subtotal']), 'vat': _money(pricing['vat']), 'total': _money(pricing['subtotal'] + pricing['vat'])})
+        return _api_success('Cart loaded.', {'items': items, 'count': sum(int(row['quantity']) for row in rows),
+                                             'subtotal': _money(pricing['subtotal']), 'vat': _money(pricing['vat']),
+                                             'total': _money(pricing['subtotal'] + pricing['vat'])})
     except Exception as exc:
         _log_api_exception(endpoint, user_id, None, None, exc)
         return _api_error('CART_LOAD_FAILED', 'Unable to load your cart.', 500, exc)
@@ -2693,9 +2727,13 @@ def legacy_update_cart():
         user_id = _api_user_id()
         if user_id is None:
             return _api_error('AUTH_REQUIRED', 'Please log in to update your cart.', 401)
-        conn = get_db_connection(); cursor = conn.cursor()
-        cursor.execute('SELECT id FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s', (user_id, data.get('item_type', 'product'), data.get('item_id')))
-        row = cursor.fetchone(); cursor.close(); conn.close()
+        conn = get_db_connection();
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s',
+                       (user_id, data.get('item_type', 'product'), data.get('item_id')))
+        row = cursor.fetchone();
+        cursor.close();
+        conn.close()
         if not row:
             return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
         return update_cart(row['id'])
@@ -2707,12 +2745,17 @@ def legacy_update_cart():
 @app.route('/api/cart/remove', methods=['POST'])
 def legacy_remove_cart():
     try:
-        data = _parse_json_object(); user_id = _api_user_id()
+        data = _parse_json_object();
+        user_id = _api_user_id()
         if user_id is None:
             return _api_error('AUTH_REQUIRED', 'Please log in to modify your cart.', 401)
-        conn = get_db_connection(); cursor = conn.cursor()
-        cursor.execute('SELECT id FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s', (user_id, data.get('item_type', 'product'), data.get('item_id')))
-        row = cursor.fetchone(); cursor.close(); conn.close()
+        conn = get_db_connection();
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM cart WHERE user_id = %s AND item_type = %s AND item_id = %s',
+                       (user_id, data.get('item_type', 'product'), data.get('item_id')))
+        row = cursor.fetchone();
+        cursor.close();
+        conn.close()
         if not row:
             return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
         return remove_cart_item(row['id'])
@@ -2800,7 +2843,6 @@ def checkout_cart():
     )
 
 
-
 @app.route('/checkout/cart/verify')
 @login_required
 def verify_cart_payment():
@@ -2845,12 +2887,12 @@ def verify_cart_payment():
                 result = response.json()
                 break
             except requests.exceptions.SSLError as e:
-                print(f"⚠️ SSL error (attempt {attempt+1}/{max_retries}): {e}")
+                print(f"⚠️ SSL error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
                 time.sleep(1)  # wait before retry
             except Exception as e:
-                print(f"⚠️ Request error (attempt {attempt+1}/{max_retries}): {e}")
+                print(f"⚠️ Request error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
                 time.sleep(1)
@@ -2860,7 +2902,7 @@ def verify_cart_payment():
             return redirect(url_for('view_cart'))
 
         # ----- Payment is successful – start transaction -----
-        # pymysql opens a transaction automatically with the first statement
+        # PyMySQL opens a transaction automatically with the first statement
         cursor = conn.cursor()  # re-use cursor after retry loop
 
         cart_items = json.loads(purchase['metadata']) if purchase['metadata'] else []
@@ -2880,6 +2922,7 @@ def verify_cart_payment():
                         payment_method, transaction_id, customer_name, customer_email
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+
                 """, (
                     order_number,
                     user_id,
@@ -2923,6 +2966,7 @@ def verify_cart_payment():
                         payment_method, transaction_id, customer_name, customer_email
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+
                 """, (
                     order_number,
                     user_id,
@@ -3081,6 +3125,7 @@ ALLOWED_MIME_TYPES = {
     # Add more as needed
 }
 
+
 @app.route('/api/chat/upload', methods=['POST'])
 @login_required
 def chat_upload():
@@ -3104,18 +3149,18 @@ def chat_upload():
         return jsonify({'success': False, 'message': 'MIME type not allowed'}), 400
 
     # 4. Validate file size
-    file.seek(0, 2)          # seek to end
+    file.seek(0, 2)  # seek to end
     size = file.tell()
-    file.seek(0)             # rewind
+    file.seek(0)  # rewind
     if size > MAX_FILE_SIZE:
-        return jsonify({'success': False, 'message': f'File exceeds {MAX_FILE_SIZE//(1024*1024)}MB limit'}), 400
+        return jsonify({'success': False, 'message': f'File exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit'}), 400
 
     # 5. Secure filename and save
     filename = secure_filename(file.filename)
     unique_filename = f"{secrets.token_hex(8)}_{filename}"
 
     upload_dir = os.path.join(UPLOAD_FOLDER, 'chat', str(user_id))
-    os.makedirs(upload_dir, exist_ok=True)   # create if missing
+    os.makedirs(upload_dir, exist_ok=True)  # create if missing
 
     file_path = os.path.join(upload_dir, unique_filename)
     file.save(file_path)
@@ -3123,6 +3168,8 @@ def chat_upload():
     # 6. Return the public URL
     file_url = f"/static/uploads/chat/{user_id}/{unique_filename}"
     return jsonify({'success': True, 'file_url': file_url})
+
+
 # ============================================
 # VENDOR ORDERS
 # ============================================
@@ -3143,10 +3190,8 @@ def admin_required(f):
             flash('You do not have permission to access this page.', 'error')
             return redirect(url_for('customer_dashboard'))
         return f(*args, **kwargs)
+
     return decorated_function
-
-
-
 
 
 # ============================================
@@ -3171,6 +3216,7 @@ def admin_pending_products():
     products = cursor.fetchall()
     conn.close()
     return render_template('admin/pending-products.html', products=products)
+
 
 @app.route('/admin/dashboard')
 @admin_required
@@ -3209,7 +3255,8 @@ def admin_dashboard():
     pending_withdrawals = cursor.fetchone()['count']
 
     # ===== Platform revenue =====
-    cursor.execute("SELECT COALESCE(SUM(platform_fee), 0) as revenue FROM orders WHERE status = 'completed' AND payment_status = 'paid'")
+    cursor.execute(
+        "SELECT COALESCE(SUM(platform_fee), 0) as revenue FROM orders WHERE status = 'completed' AND payment_status = 'paid'")
     platform_revenue = cursor.fetchone()['revenue'] or 0
 
     # ===== Total orders =====
@@ -3250,6 +3297,7 @@ def admin_dashboard():
         current_date=current_date
     )
 
+
 @app.route('/admin/courses/pending')
 @admin_required
 def admin_pending_courses():
@@ -3265,6 +3313,7 @@ def admin_pending_courses():
     courses = cursor.fetchall()
     conn.close()
     return render_template('admin/pending-courses.html', courses=courses)
+
 
 @app.route('/admin/withdrawals/pending')
 @admin_required
@@ -3282,6 +3331,7 @@ def admin_pending_withdrawals():
     withdrawals = cursor.fetchall()
     conn.close()
     return render_template('admin/pending-withdrawals.html', withdrawals=withdrawals)
+
 
 @app.route('/admin/products/<int:product_id>/detail')
 @admin_required
@@ -3333,6 +3383,7 @@ def admin_withdrawals():
         current_status=status_filter
     )
 
+
 @app.route('/admin/courses/<int:course_id>/detail')
 @admin_required
 def admin_course_detail(course_id):
@@ -3350,6 +3401,7 @@ def admin_course_detail(course_id):
         flash('Course not found.', 'error')
         return redirect(url_for('admin_pending_courses'))
     return render_template('admin/course-detail.html', course=course)
+
 
 @app.route('/admin/users')
 @admin_required
@@ -3394,6 +3446,7 @@ def admin_users():
         user_type=user_type
     )
 
+
 @app.route('/admin/products/<int:product_id>/approve', methods=['POST'])
 @admin_required
 def admin_approve_product(product_id):
@@ -3404,6 +3457,7 @@ def admin_approve_product(product_id):
         return jsonify({'success': True, 'message': 'Product approved.'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
 
 @app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
 @admin_required
@@ -3426,6 +3480,7 @@ def admin_toggle_user(user_id):
     flash('User status updated.', 'success')
     return redirect(url_for('admin_users'))
 
+
 @app.route('/admin/settings', methods=['GET', 'POST'])
 @admin_required
 def admin_settings():
@@ -3440,22 +3495,22 @@ def admin_settings():
 
         # Use INSERT ... ON CONFLICT to update or insert
         cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('commission_rate', %s)
+            INSERT INTO settings (`key`, value) VALUES ('commission_rate', %s)
             ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (commission,))
 
         cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('min_withdrawal', %s)
+            INSERT INTO settings (`key`, value) VALUES ('min_withdrawal', %s)
             ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (min_withdrawal,))
 
         cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('support_phone', %s)
+            INSERT INTO settings (`key`, value) VALUES ('support_phone', %s)
             ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (support_phone,))
 
         cursor.execute("""
-            INSERT INTO settings (key, value) VALUES ('support_button_text', %s)
+            INSERT INTO settings (`key`, value) VALUES ('support_button_text', %s)
             ON DUPLICATE KEY UPDATE value = VALUES(value)
         """, (support_button_text,))
 
@@ -3471,11 +3526,12 @@ def admin_settings():
         return redirect(url_for('admin_settings'))
 
     # GET: fetch all settings
-    cursor.execute("SELECT key, value FROM settings")
+    cursor.execute("SELECT `key`, value FROM settings")
     settings = {row['key']: row['value'] for row in cursor.fetchall()}
     conn.close()
 
     return render_template('admin/settings.html', settings=settings)
+
 
 @app.route('/admin/products/<int:product_id>/reject', methods=['POST'])
 @admin_required
@@ -3570,7 +3626,8 @@ def admin_verify_vendor(vendor_id):
         return jsonify({'success': False, 'message': 'Rejection reason is required.'}), 400
     try:
         update_vendor_verification(vendor_id, action, reason if action == 'reject' else None)
-        log_admin_action(admin_id, f'vendor_{action}', f'{action.capitalize()} vendor #{vendor_id}' + (f' with reason: {reason}' if reason else ''))
+        log_admin_action(admin_id, f'vendor_{action}',
+                         f'{action.capitalize()} vendor #{vendor_id}' + (f' with reason: {reason}' if reason else ''))
         return jsonify({'success': True, 'message': f'Vendor {action}ed.'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -3591,7 +3648,6 @@ def admin_logs():
     logs = cursor.fetchall()
     conn.close()
     return render_template('admin/logs.html', logs=logs)
-
 
 
 # ============================================
@@ -3623,8 +3679,6 @@ def vendor_orders():
     conn.close()
 
     return render_template('dashboard/vendor/orders.html', orders=orders)
-
-
 
 
 @app.route('/vendor/orders/<int:order_id>/status', methods=['POST'])
@@ -3981,6 +4035,7 @@ def vendor_send_message():
         cursor.execute("""
             INSERT INTO conversations (vendor_id, customer_id, last_message, last_message_time, unread)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
+
         """, (user_id, customer_id, message or '[Attachment]'))
         conversation_id = cursor.lastrowid
     else:
@@ -4001,6 +4056,7 @@ def vendor_send_message():
     conn.close()
 
     return jsonify({'success': True, 'message': 'Message sent!'})
+
 
 # ============================================
 # VENDOR CUSTOMERS
@@ -4221,7 +4277,6 @@ def vendor_analytics():
         category_breakdown=category_breakdown,
         total_stats=total_stats
     )
-
 
 
 # ============================================
@@ -4579,6 +4634,7 @@ def vendor_settings():
         vendor=dict(vendor) if vendor else {}
     )
 
+
 # ============================================
 # VENDOR WALLET
 # ============================================
@@ -4587,6 +4643,7 @@ def vendor_settings():
 @login_required
 def vendor_help():
     return render_template('dashboard/vendor/help-center.html')
+
 
 @app.route('/vendor/wallet/request-payout', methods=['POST'])
 @login_required
@@ -4672,7 +4729,7 @@ def oauth_login(provider):
 def get_support_settings():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT key, value FROM settings WHERE key IN ('support_phone', 'support_button_text')")
+    cursor.execute("SELECT `key`, value FROM settings WHERE `key` IN ('support_phone', 'support_button_text')")
     rows = cursor.fetchall()
     conn.close()
     settings = {row['key']: row['value'] for row in rows}
@@ -4685,7 +4742,6 @@ def get_support_settings():
 @app.context_processor
 def inject_support_settings():
     return {'support_settings': get_support_settings()}
-
 
 
 @app.route('/api/banks')
@@ -4830,7 +4886,6 @@ def mock_verify_account(account_number, bank_code):
     })
 
 
-
 def get_all_nigerian_banks():
     """Complete list of all Nigerian banks with their Paystack codes"""
     return [
@@ -4871,6 +4926,7 @@ def get_all_nigerian_banks():
         {"name": "Wema Bank", "code": "035"},
         {"name": "Zenith Bank", "code": "057"}
     ]
+
 
 # ============================================
 # ROUTES
@@ -5232,8 +5288,6 @@ def choose_role():
 # ============================================
 
 
-
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -5383,6 +5437,7 @@ def create_community_post():
     cursor.execute("""
         INSERT INTO community_posts (user_id, title, content, category)
         VALUES (%s, %s, %s, %s)
+
     """, (user_id, title, content, category))
 
     post_id = cursor.lastrowid
@@ -5463,6 +5518,7 @@ def comment_on_post(post_id):
     cursor.execute("""
         INSERT INTO community_comments (post_id, user_id, content)
         VALUES (%s, %s, %s)
+
     """, (post_id, user_id, content))
 
     comment_id = cursor.lastrowid
@@ -5490,8 +5546,6 @@ def comment_on_post(post_id):
         'message': 'Comment added!',
         'comment': dict(comment)
     })
-
-
 
 
 @app.route('/api/community/post/<int:post_id>/comments')
@@ -5683,6 +5737,7 @@ def vendor_upload_product():
                 is_digital, preview_video, shipping_method, estimated_delivery, shipping_cost
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+
         ''', (
             user_id,
             title,
@@ -5722,7 +5777,6 @@ def vendor_upload_product():
         return redirect(url_for('vendor_products'))
 
     return render_template('dashboard/vendor/upload-product.html')
-
 
 
 @app.route('/vendor/products/<int:product_id>/delete', methods=['POST'])
@@ -5889,6 +5943,7 @@ def credit_vendor_wallet(vendor_id, amount, order_id, description):
     conn.commit()
     conn.close()
 
+
 @app.route('/profile/update', methods=['POST'])
 @login_required
 def update_profile():
@@ -5980,6 +6035,7 @@ def update_profile():
         'success': True,
         'message': 'Profile updated successfully'
     })
+
 
 @app.route('/set-password', methods=['POST'])
 def set_password():
@@ -6097,16 +6153,11 @@ def resend_verification():
         }), 500
 
 
-
-
-
 @app.route('/help')
 @login_required
 def help_center():
     """Display the help center page with contact options."""
     return render_template('help.html')
-
-
 
 
 def log_email(recipient, subject, email_type, status='sent', error=None):
@@ -6118,6 +6169,7 @@ def log_email(recipient, subject, email_type, status='sent', error=None):
     """, (recipient, subject, email_type, status, error))
     conn.commit()
     conn.close()
+
 
 @app.route('/verify-email/<token>')
 def verify_email_token(token):
@@ -6173,6 +6225,7 @@ def logout():
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
 
+
 def parse_datetime_safe(dt_str):
     """Parse datetime string from SQLite safely, handling microseconds"""
     if not dt_str:
@@ -6181,6 +6234,7 @@ def parse_datetime_safe(dt_str):
     if '.' in dt_str:
         dt_str = dt_str.split('.')[0]
     return datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+
 
 # ============================================
 # CUSTOMER ONBOARDING - 5 STEP WIZARD
@@ -6287,6 +6341,7 @@ def customer_step1():
             })
 
     return render_template('onboarding/customer/customer-step1.html')
+
 
 # ============================================
 # CUSTOMER INBOX ROUTES
@@ -6410,6 +6465,7 @@ def customer_inbox_detail(vendor_id):
         user_id=user_id
     )
 
+
 @app.route('/api/customer/chat/send', methods=['POST'])
 @login_required
 def customer_send_chat_message():
@@ -6448,6 +6504,7 @@ def customer_send_chat_message():
             cursor.execute("""
                 INSERT INTO conversations (vendor_id, customer_id, last_message, last_message_time, unread)
                 VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
+
             """, (vendor_id, user_id, last_message_preview))
             conversation_id = cursor.lastrowid
             print(f"🔥 [SEND] Created new conversation: {conversation_id}")
@@ -6631,7 +6688,6 @@ def customer_step5():
             # GOOGLE OAUTH USER
             # ===========================
             if user_id and user_id != 'temp_user':
-
                 cursor.execute("""
                     UPDATE users
                     SET phone_number=%s,
@@ -6698,6 +6754,7 @@ def customer_step5():
                     onboarding_completed
                 )
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+
             """, (
                 temp_user['email'],
                 temp_user['password_hash'],
@@ -6995,6 +7052,7 @@ def vendor_step2():
 
     return render_template('onboarding/vendor/vendor-step2.html')
 
+
 def log_admin_action(admin_id, action, details, target_id=None, target_type=None):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -7007,6 +7065,7 @@ def log_admin_action(admin_id, action, details, target_id=None, target_type=None
     """, (admin_id, action, full_details, request.remote_addr))
     conn.commit()
     conn.close()
+
 
 @app.route('/admin/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute", methods=["POST"])
@@ -7058,7 +7117,6 @@ def admin_login():
         return redirect(url_for('admin_dashboard'))
 
     return render_template('admin/login.html', no_admins=no_admins)
-
 
 
 @app.route('/admin/setup', methods=['GET', 'POST'])
@@ -7121,6 +7179,7 @@ def admin_setup():
                 email, password_hash, full_name, user_type,
                 is_verified, is_active, created_at, updated_at
             ) VALUES (%s, %s, %s, 'admin', 1, 1, NOW(), NOW())
+
         """, (email, password_hash, full_name))
         # Fetch the returned id – using dict access
         user_id = cursor.lastrowid
@@ -7144,7 +7203,7 @@ def admin_setup():
 @app.route('/admin/logout')
 def admin_logout():
     """Log out the admin user"""
-    session.clear()           # Remove all session data
+    session.clear()  # Remove all session data
     flash('You have been logged out.', 'success')
     return redirect(url_for('admin_login'))
 
@@ -7452,6 +7511,7 @@ def vendor_step5():
                     verification_code, verification_code_expires, onboarding_completed
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+
             ''', (
                 temp_user['email'],
                 temp_user['password_hash'],
@@ -7533,6 +7593,7 @@ def vendor_step5():
             })
 
     return render_template('onboarding/vendor/vendor-step5.html')
+
 
 # ============================================
 # COURSE ENROLLMENT ROUTES
@@ -7761,7 +7822,7 @@ def api_initiate_checkout():
                     'product_detail', product_id=item_id)
             }), 400
 
-        # Decimal-safe pricing: price comes back from Postgres as Decimal,
+        # Decimal-safe pricing: price comes back from MySQL as Decimal,
         # so every multiplier here must be Decimal too (never a plain
         # Python float) or this raises TypeError before we ever reach
         # Paystack. VAT is added here so the amount charged always matches
@@ -7782,6 +7843,7 @@ def api_initiate_checkout():
                 amount, vendor_earnings, platform_fee, transaction_id, payment_status
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+
         """, (
             user_id,
             item_type,
@@ -7951,12 +8013,13 @@ def api_initiate_cart_checkout():
                 shipping_address, metadata
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+
         """, (
             user_id,
             'cart',
             0,
             'Cart Purchase (Multiple Items)',
-            user_id,            # buyer's own ID, to satisfy the vendor_id FK on a mixed-vendor cart order
+            user_id,  # buyer's own ID, to satisfy the vendor_id FK on a mixed-vendor cart order
             total_amount,
             vendor_earnings,
             platform_fee,
@@ -8039,7 +8102,6 @@ def api_initiate_cart_checkout():
         if conn: conn.close()
 
 
-
 @app.route('/checkout/verify')
 @login_required
 def verify_payment():
@@ -8109,6 +8171,7 @@ def verify_payment():
                     customer_name, customer_email
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+
             """, (
                 order_number,
                 user_id,
@@ -8283,6 +8346,7 @@ def payment_success():
             purchase=purchase,
             user_name=session.get('user_name', 'Customer')
         )
+
 
 @app.route('/purchase/<int:purchase_id>')
 @login_required
@@ -8624,6 +8688,7 @@ def download_product(product_id):
         mimetype=mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
     )
 
+
 @app.route('/learning/<int:course_id>/lesson/<int:lesson_id>/download')
 @login_required
 def download_lesson_video(course_id, lesson_id):
@@ -8929,6 +8994,7 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
         print(f"❌ Failed to send email: {e}")
         return False
 
+
 # ============================================
 # VENDOR COURSES ROUTES
 # ============================================
@@ -9039,6 +9105,7 @@ def vendor_create_course():
                 is_digital
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+
         ''', (
             user_id,
             title,
@@ -9362,6 +9429,7 @@ def vendor_create_lesson():
                 order_index, video_url, video_file, is_free
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+
         ''', (course_id, title, description, duration, order_index,
               video_url if not has_video_file else None,
               video_file_url,
@@ -9642,6 +9710,7 @@ def debug_video_upload():
         'files': [f.filename for f in request.files.values()]
     })
 
+
 @app.route('/course/<int:course_id>/lesson/<int:lesson_id>')
 @login_required
 def view_lesson(course_id, lesson_id):
@@ -9680,16 +9749,14 @@ def not_found(e):
     return render_template('404.html'), 404
 
 
-
-
 @app.errorhandler(500)
 def server_error(e):
     return render_template('500.html'), 500
 
 
-#===============
-#EMAIL
-#===============
+# ===============
+# EMAIL
+# ===============
 
 
 def generate_verification_token():
@@ -9917,10 +9984,13 @@ def send_verification_email(email, full_name, verification_token, verification_c
         print(f"❌ Failed to send email: {e}")
         return False
 
+
 def generate_verification_code():
     """Generate a 6-digit verification code"""
     return f"{secrets.randbelow(1000000):06d}"
-#test email
+
+
+# test email
 
 @app.route('/verify-email-page')
 def verify_email_page():
@@ -9995,7 +10065,7 @@ def verify_code():
     })
 
 
-#forgot password
+# forgot password
 
 # ============================================
 # PASSWORD RESET - COMPLETE IMPLEMENTATION
@@ -10080,6 +10150,7 @@ def reset_rate_limit(user_id, cursor):
             password_reset_otp_expires = NULL
         WHERE id = %s
     ''', (user_id,))
+
 
 def generate_secure_token():
     """Generate a secure password reset token"""
@@ -10244,7 +10315,6 @@ def send_password_otp():
         return jsonify({'success': True, 'message': 'OTP sent to your email.'})
     else:
         return jsonify({'success': False, 'message': 'Failed to send OTP.'}), 500
-
 
 
 @app.route('/verify-password-otp', methods=['POST'])
@@ -10418,6 +10488,7 @@ def reset_password_with_token(token):
     conn.close()
 
     return render_template('reset-password.html', token=token, email=email)
+
 
 # ============================================
 # CUSTOMER DASHBOARD ROUTES
@@ -10798,10 +10869,14 @@ def inbox():
 
     # Demo conversations
     conversations = [
-        {'avatar': 'C', 'name': 'Cadmus Tech', 'preview': 'Thanks for purchasing our course!', 'time': '2m', 'active': True},
-        {'avatar': 'S', 'name': 'Sarah Johnson', 'preview': "Let's collaborate on a project.", 'time': '15m', 'active': False},
-        {'avatar': 'B', 'name': 'MichiePlus Support', 'preview': 'Your request has been received.', 'time': '1h', 'active': False},
-        {'avatar': 'D', 'name': 'David Smith', 'preview': 'Can you review my portfolio?', 'time': 'Yesterday', 'active': False}
+        {'avatar': 'C', 'name': 'Cadmus Tech', 'preview': 'Thanks for purchasing our course!', 'time': '2m',
+         'active': True},
+        {'avatar': 'S', 'name': 'Sarah Johnson', 'preview': "Let's collaborate on a project.", 'time': '15m',
+         'active': False},
+        {'avatar': 'B', 'name': 'MichiePlus Support', 'preview': 'Your request has been received.', 'time': '1h',
+         'active': False},
+        {'avatar': 'D', 'name': 'David Smith', 'preview': 'Can you review my portfolio?', 'time': 'Yesterday',
+         'active': False}
     ]
 
     messages = [
@@ -10820,6 +10895,7 @@ def inbox():
         active_conversation=active_conversation
     )
 
+
 # ============================================
 # ============================================
 # MARKETPLACE ROUTES
@@ -10830,10 +10906,13 @@ def _marketplace_product_query(search=None, category=None):
     clauses = ["p.is_active = 1", "p.is_approved = 1"]
     params = []
     if search:
-        clauses.append("(p.title LIKE %s OR COALESCE(p.description, '') LIKE %s OR COALESCE(p.category, '') LIKE %s OR COALESCE(v.business_name, u.full_name, '') LIKE %s)")
-        like = f'%{search}%'; params.extend([like, like, like, like])
+        clauses.append(
+            "(p.title LIKE %s OR COALESCE(p.description, '') LIKE %s OR COALESCE(p.category, '') LIKE %s OR COALESCE(v.business_name, u.full_name, '') LIKE %s)")
+        like = f'%{search}%';
+        params.extend([like, like, like, like])
     if category:
-        clauses.append('p.category = %s'); params.append(category)
+        clauses.append('p.category = %s');
+        params.append(category)
     query = f'''SELECT p.id, p.title, p.description, p.category, p.price, p.cover_image,
                        p.product_type, p.rating, p.reviews_count, p.is_digital,
                        p.stock_quantity, p.created_at, p.vendor_id,
@@ -10853,16 +10932,22 @@ def marketplace():
     try:
         search = request.args.get('q', '').strip()[:120]
         category = request.args.get('category', '').strip()[:100]
-        conn = get_db_connection(); cursor = conn.cursor()
+        conn = get_db_connection();
+        cursor = conn.cursor()
         query, params = _marketplace_product_query(search, category)
-        cursor.execute(query, params); products = [dict(row) for row in cursor.fetchall()]
-        cursor.execute("SELECT DISTINCT category FROM products WHERE is_active = 1 AND is_approved = 1 AND category IS NOT NULL AND category <> '' ORDER BY category")
+        cursor.execute(query, params);
+        products = [dict(row) for row in cursor.fetchall()]
+        cursor.execute(
+            "SELECT DISTINCT category FROM products WHERE is_active = 1 AND is_approved = 1 AND category IS NOT NULL AND category <> '' ORDER BY category")
         categories = [row['category'] for row in cursor.fetchall()]
-        return render_template('marketplace.html', products=products, categories=categories, search=search, selected_category=category)
+        return render_template('marketplace.html', products=products, categories=categories, search=search,
+                               selected_category=category)
     except Exception as exc:
-        app.logger.exception('marketplace_load_error endpoint=%s user_id=%s error_type=%s message=%s', request.path, _api_user_id(), type(exc).__name__, str(exc))
+        app.logger.exception('marketplace_load_error endpoint=%s user_id=%s error_type=%s message=%s', request.path,
+                             _api_user_id(), type(exc).__name__, str(exc))
         flash('Marketplace could not be loaded. See the Flask terminal for the exact database error.', 'error')
-        return render_template('marketplace.html', products=[], categories=[], search='', selected_category='', page_error='Marketplace load failed.'), 500
+        return render_template('marketplace.html', products=[], categories=[], search='', selected_category='',
+                               page_error='Marketplace load failed.'), 500
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
@@ -10875,12 +10960,16 @@ def marketplace_search():
     try:
         search = request.args.get('q', '').strip()[:120]
         category = request.args.get('category', '').strip()[:100]
-        conn = get_db_connection(); cursor = conn.cursor()
+        conn = get_db_connection();
+        cursor = conn.cursor()
         query, params = _marketplace_product_query(search, category)
         cursor.execute(query, params)
         products = []
         for row in cursor.fetchall():
-            item = dict(row); item.pop('created_at', None); item['price'] = _money(item['price']); products.append(item)
+            item = dict(row);
+            item.pop('created_at', None);
+            item['price'] = _money(item['price']);
+            products.append(item)
         return _api_success('Marketplace results loaded.', {'products': products, 'count': len(products)})
     except Exception as exc:
         _log_api_exception(request.path, _api_user_id(), None, None, exc)
@@ -10901,7 +10990,8 @@ def products():
 def product_detail(product_id):
     conn = cursor = None
     try:
-        conn = get_db_connection(); cursor = conn.cursor()
+        conn = get_db_connection();
+        cursor = conn.cursor()
         cursor.execute('''SELECT p.*, COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor') AS vendor_name,
                                  v.business_description, v.logo_url
                           FROM products p JOIN users u ON p.vendor_id = u.id
@@ -10913,11 +11003,13 @@ def product_detail(product_id):
             return redirect(url_for('marketplace'))
         cursor.execute('''SELECT r.rating, r.comment, r.created_at, COALESCE(u.full_name, 'Customer') AS customer_name
                           FROM reviews r LEFT JOIN users u ON r.customer_id = u.id
-                          WHERE r.product_id = %s AND COALESCE(r.is_approved, 1) = 1 ORDER BY r.created_at DESC''', (product_id,))
+                          WHERE r.product_id = %s AND COALESCE(r.is_approved, 1) = 1 ORDER BY r.created_at DESC''',
+                       (product_id,))
         reviews = cursor.fetchall()
         return render_template('product-detail.html', product=dict(product), reviews=reviews)
     except Exception as exc:
-        app.logger.exception('product_detail_error endpoint=%s user_id=%s product_id=%s error_type=%s message=%s', request.path, _api_user_id(), product_id, type(exc).__name__, str(exc))
+        app.logger.exception('product_detail_error endpoint=%s user_id=%s product_id=%s error_type=%s message=%s',
+                             request.path, _api_user_id(), product_id, type(exc).__name__, str(exc))
         flash('Product detail could not be loaded. See the Flask terminal for the exact database error.', 'error')
         return redirect(url_for('marketplace'))
     finally:
@@ -10947,7 +11039,9 @@ def download_all_lessons(course_id):
         flash('Course not found.', 'error')
         return redirect(url_for('learning'))
 
-    cursor.execute("SELECT video_file, title FROM lessons WHERE course_id = %s AND video_file IS NOT NULL AND video_file != ''", (course_id,))
+    cursor.execute(
+        "SELECT video_file, title FROM lessons WHERE course_id = %s AND video_file IS NOT NULL AND video_file != ''",
+        (course_id,))
     lessons = cursor.fetchall()
     conn.close()
 
@@ -10976,6 +11070,7 @@ def download_all_lessons(course_id):
         mimetype='application/zip'
     )
 
+
 @app.route('/courses')
 @login_required
 def courses():
@@ -10993,11 +11088,13 @@ def courses():
     conn.close()
     return render_template('dashboard/customer/courses.html', courses=courses)
 
+
 @app.route('/vendors')
 @login_required
 def vendors():
     """Vendors page"""
     return render_template('vendors.html', title='Vendors')
+
 
 # ============================================
 # PASSWORD RESET EMAIL FUNCTIONS
@@ -11096,6 +11193,7 @@ def course_detail(course_id):
         is_enrolled=is_enrolled
     )
 
+
 @app.context_processor
 def inject_admin_stats():
     if session.get('user_type') == 'admin':
@@ -11114,10 +11212,11 @@ def inject_admin_stats():
             'pending_vendors_count': pending_vendors
         }
     return {}
+
+
 # ============================================
 # COURSE DETAIL ROUTE
 # ============================================
-
 
 
 @app.route('/debug/course/<int:course_id>')
@@ -11231,6 +11330,7 @@ def send_chat_message():
         cursor.execute("""
             INSERT INTO conversations (vendor_id, customer_id, last_message, last_message_time, unread)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
+
         """, (vendor_id, user_id, message))
         conversation_id = cursor.lastrowid
     else:
@@ -11251,6 +11351,7 @@ def send_chat_message():
     conn.close()
 
     return jsonify({'success': True, 'message': 'Message sent!'})
+
 
 def send_password_reset_email(email, full_name, reset_token):
     """Send password reset email with secure link"""
@@ -11372,11 +11473,13 @@ def send_password_reset_email(email, full_name, reset_token):
         print(f"❌ Failed to send email: {e}")
         return False
 
+
 @app.route('/verify-otp')
 def verify_otp_page():
     """Show OTP verification page"""
     email = request.args.get('email', '')
     return render_template('verify-otp.html', email=email)
+
 
 def send_otp_email(email, full_name, otp):
     """Send OTP email"""
@@ -11484,8 +11587,6 @@ def send_otp_email(email, full_name, otp):
             server.starttls()
             server.login(EMAIL_USER, password)
             server.send_message(msg)
-
-
 
         print(f"✅ OTP email sent to: {email}")
         return True
