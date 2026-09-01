@@ -69,7 +69,7 @@ requests.Session.request = _patched_request
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-print("⚠️ SSL verification disabled for development")
+print(" SSL verification disabled for development")
 # ------------------------------------------------
 
 
@@ -95,7 +95,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 # --------------------------------
 
 if os.environ.get('FLASK_ENV') != 'production':
-    print("⚠️ SSL verification disabled for development")
+    print("SSL verification disabled for development")
 
 # ============================================
 # OAUTH CONFIGURATION - GOOGLE
@@ -147,9 +147,9 @@ if os.environ.get("GOOGLE_OAUTH_CLIENT_ID") and os.environ.get("GOOGLE_OAUTH_CLI
     # ------------------------------------------------------------
 
     app.register_blueprint(google_blueprint, url_prefix="/login")
-    print("✅ Google OAuth configured successfully")
+    print("google OAuth configured successfully")
 else:
-    print("⚠️ Google OAuth credentials not found. Skipping Google login.")
+    print(" Google OAuth credentials not found. Skipping Google login.")
 # ============================================
 # PAYSTACK CONFIGURATION
 # ============================================
@@ -215,11 +215,11 @@ def verify_turnstile_token(token, remote_ip=None):
     """
     if not TURNSTILE_SECRET_KEY:
         if IS_PRODUCTION:
-            print("🚫 SECURITY: TURNSTILE_SECRET_KEY is not configured in production. "
+            print("SECURITY: TURNSTILE_SECRET_KEY is not configured in production. "
                   "Blocking request instead of silently allowing it.")
             return False, 'Bot protection is not configured correctly. Please contact support.'
         else:
-            print("⚠️ TURNSTILE_SECRET_KEY not set - allowing request (DEVELOPMENT ONLY, "
+            print(" TURNSTILE_SECRET_KEY not set - allowing request (DEVELOPMENT ONLY, "
                   "this path is disabled whenever FLASK_ENV=production).")
             return True, None
 
@@ -243,13 +243,13 @@ def verify_turnstile_token(token, remote_ip=None):
         result = json.loads(resp.data.decode('utf-8'))
     except Exception as e:
         # Never leak internal error details to the client.
-        print(f"🚫 Turnstile verification request failed: {e}")
+        print(f" Turnstile verification request failed: {e}")
         return False, 'Verification service is temporarily unavailable. Please try again.'
 
     if result.get('success'):
         return True, None
 
-    print(f"🚫 Turnstile verification failed: {result.get('error-codes')}")
+    print(f" Turnstile verification failed: {result.get('error-codes')}")
     return False, 'Verification failed. Please refresh the page and try again.'
 
 
@@ -470,7 +470,7 @@ def update_vendor_verification(vendor_id, new_status, rejection_reason=None):
 def send_vendor_notification(vendor_email, vendor_name, subject, message, action_type):
     """Send a notification email to a vendor about admin actions."""
     if not EMAIL_USER or not EMAIL_PASSWORD:
-        print(f"📧 [SKIPPED] Email not configured. Would send to {vendor_email}: {subject}")
+        print(f" [SKIPPED] Email not configured. Would send to {vendor_email}: {subject}")
         return False
 
     html_content = f"""
@@ -539,11 +539,11 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
             server.login(EMAIL_USER, EMAIL_PASSWORD.replace(' ', ''))
             server.send_message(msg)
 
-        print(f"✅ Vendor notification email sent to {vendor_email}")
+        print(f"Vendor notification email sent to {vendor_email}")
         return True
 
     except Exception as e:
-        print(f"❌ Failed to send vendor notification: {e}")
+        print(f"Failed to send vendor notification: {e}")
         return False
 
 
@@ -569,10 +569,10 @@ def init_db():
             if not column_exists(cursor, table_name, col_name):
                 try:
                     cursor.execute(alter_stmt)
-                    print(f"✅ {col_name} column added to {table_name}")
+                    print(f"{col_name} column added to {table_name}")
                 except pymysql.MySQLError as e:
                     conn.rollback()
-                    print(f"⚠️ Could not add '{col_name}' to {table_name}: {e}")
+                    print(f"Could not add '{col_name}' to {table_name}: {e}")
 
     # ============================================
     # USERS TABLE
@@ -610,7 +610,7 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        print("✅ users table created")
+        print("users table created")
     else:
         migrate_columns(cursor, "users", {
             'password_reset_otp': "ALTER TABLE users ADD COLUMN password_reset_otp VARCHAR(6)",
@@ -647,7 +647,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ customer_profiles table created")
+        print("customer_profiles table created")
     else:
         migrate_columns(cursor, "customer_profiles", {
             'linkedin_url': "ALTER TABLE customer_profiles ADD COLUMN linkedin_url VARCHAR(255)",
@@ -701,7 +701,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ vendor_profiles table created")
+        print("vendor_profiles table created")
     else:
         migrate_columns(cursor, "vendor_profiles", {
             'business_slug': "ALTER TABLE vendor_profiles ADD COLUMN business_slug VARCHAR(255) UNIQUE",
@@ -737,7 +737,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ password_resets table created")
+        print("password_resets table created")
 
     # ============================================
     # SESSIONS TABLE
@@ -755,7 +755,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ sessions table created")
+        print("sessions table created")
 
     # ============================================
     # AUDIT LOGS TABLE
@@ -774,7 +774,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             )
         ''')
-        print("✅ audit_logs table created")
+        print("audit_logs table created")
 
     # ============================================
     # PRODUCTS TABLE
@@ -815,7 +815,7 @@ def init_db():
                 FOREIGN KEY (vendor_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ products table created")
+        print("products table created")
     else:
         migrate_columns(cursor, "products", {
             'preview_video': "ALTER TABLE products ADD COLUMN preview_video VARCHAR(500)",
@@ -867,7 +867,7 @@ def init_db():
                 FOREIGN KEY (vendor_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ courses table created")
+        print("courses table created")
     else:
         migrate_columns(cursor, "courses", {
             'is_digital': "ALTER TABLE courses ADD COLUMN is_digital INTEGER DEFAULT 1",
@@ -899,7 +899,7 @@ def init_db():
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ lessons table created")
+        print("lessons table created")
     else:
         migrate_columns(cursor, "lessons", {
             'video_file': "ALTER TABLE lessons ADD COLUMN video_file VARCHAR(500)"
@@ -925,7 +925,7 @@ def init_db():
                 FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ enrollments table created")
+        print("enrollments table created")
 
     # ============================================
     # ORDERS TABLE
@@ -961,7 +961,7 @@ def init_db():
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL
             )
         ''')
-        print("✅ orders table created")
+        print("orders table created")
 
     # ============================================
     # ORDER ITEMS TABLE
@@ -982,7 +982,7 @@ def init_db():
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL
             )
         ''')
-        print("✅ order_items table created")
+        print("order_items table created")
 
     # ============================================
     # CONVERSATIONS TABLE
@@ -1003,7 +1003,7 @@ def init_db():
                 UNIQUE(vendor_id, customer_id)
             )
         ''')
-        print("✅ conversations table created")
+        print("conversations table created")
 
     # ============================================
     # MESSAGES TABLE
@@ -1026,7 +1026,7 @@ def init_db():
                 FOREIGN KEY (receiver_id) REFERENCES users(id)
             )
         ''')
-        print("✅ messages table created with attachment column")
+        print("messages table created with attachment column")
     else:
         migrate_columns(cursor, "messages", {
             'attachment': "ALTER TABLE messages ADD COLUMN attachment VARCHAR(500)"
@@ -1053,7 +1053,7 @@ def init_db():
                 FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
             )
         ''')
-        print("✅ transactions table created")
+        print("transactions table created")
 
     # ============================================
     # WALLET TABLE
@@ -1073,7 +1073,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ wallet table created")
+        print("wallet table created")
 
     # ============================================
     # PAYOUT REQUESTS TABLE
@@ -1095,7 +1095,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ payout_requests table created")
+        print("payout_requests table created")
     else:
         migrate_columns(cursor, "payout_requests", {
             'admin_id': "ALTER TABLE payout_requests ADD COLUMN admin_id INTEGER",
@@ -1125,7 +1125,7 @@ def init_db():
                 FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ reviews table created")
+        print("reviews table created")
     else:
         migrate_columns(cursor, "reviews", {
             'course_id': "ALTER TABLE reviews ADD COLUMN course_id INTEGER"
@@ -1147,7 +1147,7 @@ def init_db():
                 FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ saved_items table created")
+        print("saved_items table created")
 
     # ============================================
     # ACTIVITY LOG TABLE
@@ -1165,7 +1165,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ activity_log table created")
+        print("activity_log table created")
 
     # ============================================
     # PURCHASES TABLE
@@ -1194,7 +1194,7 @@ def init_db():
                 FOREIGN KEY (vendor_id) REFERENCES users(id)
             )
         ''')
-        print("✅ purchases table created")
+        print("purchases table created")
     else:
         migrate_columns(cursor, "purchases", {
             'shipping_address': "ALTER TABLE purchases ADD COLUMN shipping_address TEXT",
@@ -1219,7 +1219,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         ''')
-        print("✅ downloads table created")
+        print("downloads table created")
 
     # ============================================
     # CART TABLE
@@ -1238,7 +1238,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ cart table created")
+        print("cart table created")
 
     # ============================================
     # COMMUNITY POSTS TABLE
@@ -1260,7 +1260,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ community_posts table created")
+        print("community_posts table created")
 
     # ============================================
     # COMMUNITY LIKES TABLE
@@ -1278,7 +1278,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ community_likes table created")
+        print("community_likes table created")
 
     # ============================================
     # COMMUNITY COMMENTS TABLE
@@ -1296,7 +1296,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
-        print("✅ community_comments table created")
+        print("community_comments table created")
 
     # ============================================
     # ADMIN LOGS TABLE
@@ -1314,7 +1314,7 @@ def init_db():
                 FOREIGN KEY (admin_id) REFERENCES users(id)
             )
         ''')
-        print("✅ admin_logs table created")
+        print("admin_logs table created")
 
     # ============================================
     # EMAIL LOGS TABLE
@@ -1332,7 +1332,7 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        print("✅ email_logs table created")
+        print("email_logs table created")
 
     # ============================================
     # SETTINGS TABLE
@@ -1342,7 +1342,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE settings (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                key VARCHAR(100) UNIQUE NOT NULL,
+                `key` VARCHAR(100) UNIQUE NOT NULL,
                 value TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -1351,7 +1351,7 @@ def init_db():
             "INSERT INTO settings (`key`, value) VALUES ('commission_rate', '30') ON DUPLICATE KEY UPDATE `key` = `key`")
         cursor.execute(
             "INSERT INTO settings (`key`, value) VALUES ('min_withdrawal', '5000') ON DUPLICATE KEY UPDATE `key` = `key`")
-        print("✅ settings table created with defaults")
+        print("settings table created with defaults")
 
     # ============================================
     # DATA MIGRATION – Set initial statuses based on existing flags
@@ -1361,19 +1361,19 @@ def init_db():
         cursor.execute("UPDATE products SET status = 'approved' WHERE is_approved = 1 AND is_active = 1")
         cursor.execute("UPDATE products SET status = 'pending_review' WHERE is_approved = 0")
     else:
-        print("⚠️ 'status' column missing on products – skipping status migration")
+        print(" 'status' column missing on products – skipping status migration")
 
     if column_exists(cursor, 'courses', 'status'):
         cursor.execute("UPDATE courses SET status = 'approved' WHERE is_approved = 1 AND is_active = 1")
         cursor.execute("UPDATE courses SET status = 'pending_review' WHERE is_approved = 0")
     else:
-        print("⚠️ 'status' column missing on courses – skipping status migration")
+        print(" 'status' column missing on courses – skipping status migration")
 
     if column_exists(cursor, 'vendor_profiles', 'verification_status'):
         cursor.execute("UPDATE vendor_profiles SET verification_status = 'verified' WHERE business_verified = 1")
         cursor.execute("UPDATE vendor_profiles SET verification_status = 'pending' WHERE business_verified = 0")
     else:
-        print("⚠️ 'verification_status' column missing on vendor_profiles – skipping migration")
+        print(" 'verification_status' column missing on vendor_profiles – skipping migration")
 
     # ============================================
     # CREATE INDEXES FOR PERFORMANCE
@@ -1404,7 +1404,7 @@ def init_db():
     # ============================================
     conn.commit()
     conn.close()
-    print("✅ Database initialized successfully with all tables and columns")
+    print("Database initialized successfully with all tables and columns")
 
 
 def sync_vendor_wallet(user_id):
@@ -2887,12 +2887,12 @@ def verify_cart_payment():
                 result = response.json()
                 break
             except requests.exceptions.SSLError as e:
-                print(f"⚠️ SSL error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f" SSL error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
                 time.sleep(1)  # wait before retry
             except Exception as e:
-                print(f"⚠️ Request error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"Request error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise
                 time.sleep(1)
@@ -3022,7 +3022,7 @@ def verify_cart_payment():
     except Exception as e:
         if conn:
             conn.rollback()
-        print(f"❌ Cart verify error: {e}")
+        print(f"cart verify error: {e}")
         flash('Payment verification error. Please contact support.', 'error')
         return redirect(url_for('view_cart'))
 
@@ -3752,7 +3752,7 @@ def vendor_wallet():
         WHERE vendor_id = %s 
           AND status = 'completed'
           AND payment_status = 'paid'
-          AND DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
+          AND DATE_FORMAT(created_at, '%%Y-%%m') = DATE_FORMAT(NOW(), '%%Y-%%m')
     """, (user_id,))
     monthly_earnings = cursor.fetchone()['earnings'] or 0
 
@@ -3762,7 +3762,7 @@ def vendor_wallet():
         WHERE vendor_id = %s 
           AND status = 'completed'
           AND payment_status = 'paid'
-          AND DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m')
+          AND DATE_FORMAT(created_at, '%%Y-%%m') = DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%%Y-%%m')
     """, (user_id,))
     last_month_earnings = cursor.fetchone()['earnings'] or 0
 
@@ -4189,7 +4189,7 @@ def vendor_analytics():
     # ===== 1. Monthly sales (last 6 months) =====
     cursor.execute("""
         SELECT 
-            DATE_FORMAT(created_at, '%Y-%m') as month,
+            DATE_FORMAT(created_at, '%%Y-%%m') as month,
             COUNT(*) as order_count,
             COALESCE(SUM(total_amount), 0) as revenue,
             COALESCE(SUM(vendor_earnings), 0) as earnings
@@ -4197,7 +4197,7 @@ def vendor_analytics():
         WHERE vendor_id = %s 
           AND status = 'completed'
           AND created_at >= NOW() - INTERVAL 6 MONTH
-        GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+        GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
         ORDER BY month ASC
     """, (user_id,))
     monthly_data = cursor.fetchall()
@@ -4761,8 +4761,8 @@ def get_banks():
         response = requests.get(url, headers=headers, timeout=30)
         result = response.json()
 
-        print(f"📡 Banks API Response Status: {response.status_code}")
-        print(f"📡 Banks API Response: {result.get('message') if not result.get('status') else 'Success'}")
+        print(f" Banks API Response Status: {response.status_code}")
+        print(f" Banks API Response: {result.get('message') if not result.get('status') else 'Success'}")
 
         if result.get('status') and result.get('data'):
             banks = []
@@ -4773,12 +4773,12 @@ def get_banks():
                 })
             return jsonify({'banks': banks})
         else:
-            print(f"⚠️ Paystack error fetching banks: {result.get('message')}")
+            print(f" Paystack error fetching banks: {result.get('message')}")
             # Fallback to hardcoded list
             return jsonify({'banks': get_all_nigerian_banks()})
 
     except Exception as e:
-        print(f"❌ Error fetching banks: {e}")
+        print(f"Error fetching banks: {e}")
         # Fallback to hardcoded list
         return jsonify({'banks': get_all_nigerian_banks()})
 
@@ -4797,13 +4797,13 @@ def verify_account():
         return jsonify({'success': False, 'message': 'Please select a bank'}), 400
 
     print(f"\n{'=' * 60}")
-    print(f"🔍 Verifying Account: {account_number}")
-    print(f"🏦 Bank Code: {bank_code}")
-    print(f"🔑 Paystack Key: {'✅ Set' if PAYSTACK_SECRET_KEY else '❌ Not Set'}")
+    print(f" Verifying Account: {account_number}")
+    print(f" Bank Code: {bank_code}")
+    print(f" Paystack Key: {'Set' if PAYSTACK_SECRET_KEY else 'Not Set'}")
     print(f"{'=' * 60}")
 
     if not PAYSTACK_SECRET_KEY:
-        print("⚠️ No Paystack key found")
+        print(" No Paystack key found")
         return jsonify({'success': False, 'message': 'Paystack not configured'}), 400
 
     try:
@@ -4817,20 +4817,20 @@ def verify_account():
             'Content-Type': 'application/json'
         }
 
-        print(f"📡 Calling Paystack API...")
+        print(f" Calling Paystack API...")
         print(f"   URL: {url}")
         print(f"   Params: {params}")
 
         response = requests.get(url, params=params, headers=headers, timeout=30)
         result = response.json()
 
-        print(f"📥 Response Status: {response.status_code}")
-        print(f"📥 Response Body: {result}")
-        print(f"📥 Response Message: {result.get('message', 'No message')}")
+        print(f" Response Status: {response.status_code}")
+        print(f" Response Body: {result}")
+        print(f" Response Message: {result.get('message', 'No message')}")
 
         if result.get('status') and result.get('data'):
             account_name = result['data']['account_name']
-            print(f"✅ Account verified! Name: {account_name}")
+            print(f" Account verified! Name: {account_name}")
             return jsonify({
                 'success': True,
                 'account_name': account_name,
@@ -4839,7 +4839,7 @@ def verify_account():
             })
         else:
             error_msg = result.get('message', 'Unknown error')
-            print(f"⚠️ Paystack error: {error_msg}")
+            print(f" Paystack error: {error_msg}")
 
             # Return the actual error so frontend can display it
             return jsonify({
@@ -4849,13 +4849,13 @@ def verify_account():
             }), 400
 
     except requests.exceptions.Timeout:
-        print(f"❌ Request timed out")
+        print(f"Request timed out")
         return jsonify({'success': False, 'message': 'Request timed out. Please try again.'}), 500
     except requests.exceptions.ConnectionError:
-        print(f"❌ Connection error")
+        print(f" Connection error")
         return jsonify({'success': False, 'message': 'Connection error. Please check your internet.'}), 500
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 
@@ -5608,7 +5608,7 @@ def vendor_products():
 @login_required
 def vendor_upload_product():
     """Upload a new product (Digital or Physical)"""
-    print("🔥🔥🔥 VENDOR UPLOAD PRODUCT ROUTE HIT! 🔥🔥🔥")
+    print(" VENDOR UPLOAD PRODUCT ROUTE HIT! ")
     user_id = session.get('user_id')
 
     # Check if user is vendor
@@ -5708,7 +5708,7 @@ def vendor_upload_product():
                     video_path = os.path.join(upload_dir, unique_video)
                     preview_video_file.save(video_path)
                     preview_video_filename = f"/static/uploads/{user_id}/videos/{unique_video}"
-                    print(f"✅ Preview video saved to: {preview_video_filename}")
+                    print(f"Preview video saved to: {preview_video_filename}")
             elif preview_video_url:
                 preview_video_filename = preview_video_url
 
@@ -6472,10 +6472,10 @@ def customer_send_chat_message():
     user_id = session.get('user_id')
     data = request.get_json()
 
-    # 🔥 DEBUG
+    #  DEBUG
     print("=" * 60)
-    print("🔥 [SEND] User ID:", user_id)
-    print("🔥 [SEND] Incoming data:", data)
+    print(" [SEND] User ID:", user_id)
+    print(" [SEND] Incoming data:", data)
     print("=" * 60)
 
     vendor_id = data.get('vendor_id')
@@ -6507,7 +6507,7 @@ def customer_send_chat_message():
 
             """, (vendor_id, user_id, last_message_preview))
             conversation_id = cursor.lastrowid
-            print(f"🔥 [SEND] Created new conversation: {conversation_id}")
+            print(f" [SEND] Created new conversation: {conversation_id}")
         else:
             conversation_id = conv['id']
             cursor.execute("""
@@ -6515,14 +6515,14 @@ def customer_send_chat_message():
                 SET last_message = %s, last_message_time = CURRENT_TIMESTAMP, unread = 1
                 WHERE id = %s
             """, (last_message_preview, conversation_id))
-            print(f"🔥 [SEND] Updated existing conversation: {conversation_id}")
+            print(f" [SEND] Updated existing conversation: {conversation_id}")
 
         # 2. Insert message with optional attachment
         cursor.execute("""
             INSERT INTO messages (conversation_id, sender_id, receiver_id, text, type, is_read, attachment)
             VALUES (%s, %s, %s, %s, 'sent', 0, %s)
         """, (conversation_id, user_id, vendor_id, message, attachment if attachment else None))
-        print(f"🔥 [SEND] Message inserted successfully!")
+        print(f" [SEND] Message inserted successfully!")
 
         conn.commit()
         conn.close()
@@ -6530,7 +6530,7 @@ def customer_send_chat_message():
         return jsonify({'success': True, 'message': 'Message sent!'})
 
     except Exception as e:
-        print(f"🔥 [SEND] ERROR: {e}")
+        print(f" [SEND] ERROR: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
@@ -6859,7 +6859,7 @@ def customer_step5():
 @login_required
 def vendor_step1():
     """Vendor onboarding - Step 1: Business Identity"""
-    print("🔥 ENTERED VENDOR STEP 1")
+    print(" ENTERED VENDOR STEP 1")
     user_id = session.get('user_id')
 
     # Check if this is an OAuth user (has user_id in database) or temp_user (email signup)
@@ -8246,7 +8246,7 @@ def verify_payment():
 
     except Exception as e:
         conn.close()
-        print(f"❌ Payment verification error: {e}")
+        print(f"Payment verification error: {e}")
         flash('Payment verification error. Please contact support.', 'error')
         return redirect(url_for('marketplace'))
 
@@ -8886,7 +8886,7 @@ def api_enroll_course_paystack():
             return jsonify({'success': False, 'message': 'Payment verification failed.'}), 400
 
     except Exception as e:
-        print(f"❌ Payment verification error: {e}")
+        print(f"Payment verification error: {e}")
         return jsonify({'success': False, 'message': 'Payment verification error.'}), 500
 
 
@@ -8964,7 +8964,7 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
     # If email not configured, print to console
     if not EMAIL_USER or not EMAIL_PASSWORD:
         print(f"\n{'=' * 70}")
-        print(f"📧 PURCHASE CONFIRMATION EMAIL")
+        print(f" PURCHASE CONFIRMATION EMAIL")
         print(f"To: {email}")
         print(f"Subject: {subject}")
         print(f"Download: {download_link}")
@@ -8987,11 +8987,11 @@ def send_purchase_confirmation(email, full_name, item_title, item_type, item_id)
             server.login(EMAIL_USER, password)
             server.send_message(msg)
 
-        print(f"✅ Purchase confirmation email sent to: {email}")
+        print(f"Purchase confirmation email sent to: {email}")
         return True
 
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        print(f"Failed to send email: {e}")
         return False
 
 
@@ -9088,7 +9088,7 @@ def vendor_create_course():
                 video_path = os.path.join(upload_dir, unique_video)
                 promo_video_file.save(video_path)
                 promo_video_filename = f"/static/uploads/{user_id}/videos/{unique_video}"
-                print(f"✅ Promo video saved to: {promo_video_filename}")
+                print(f"Promo video saved to: {promo_video_filename}")
         elif promo_video_url:
             promo_video_filename = promo_video_url
 
@@ -9393,7 +9393,7 @@ def vendor_create_lesson():
         file_size = video_file.tell()
         video_file.seek(0)
 
-        print(f"📊 File size: {file_size} bytes ({file_size / (1024 * 1024):.2f} MB)")
+        print(f" File size: {file_size} bytes ({file_size / (1024 * 1024):.2f} MB)")
 
         if file_size > 500 * 1024 * 1024:
             return jsonify({
@@ -9411,11 +9411,11 @@ def vendor_create_lesson():
 
         try:
             video_file.save(file_path)
-            print(f"✅ Video saved to: {file_path}")
+            print(f"Video saved to: {file_path}")
             video_file_url = f"/static/uploads/{user_id}/videos/{unique_filename}"
-            print(f"📁 Video URL stored in DB: {video_file_url}")
+            print(f" Video URL stored in DB: {video_file_url}")
         except Exception as e:
-            print(f"❌ Error saving video: {e}")
+            print(f"Error saving video: {e}")
             return jsonify({
                 'success': False,
                 'message': f'Error saving video: {str(e)}'
@@ -9436,7 +9436,7 @@ def vendor_create_lesson():
               is_free))
 
         lesson_id = cursor.lastrowid
-        print(f"✅ Lesson {lesson_id} created with video_file: {video_file_url}")
+        print(f"Lesson {lesson_id} created with video_file: {video_file_url}")
 
         cursor.execute('''
             UPDATE courses 
@@ -9446,11 +9446,11 @@ def vendor_create_lesson():
         ''', (course_id, course_id, course_id))
 
         conn.commit()
-        print(f"✅ All changes committed to database")
+        print(f"All changes committed to database")
 
     except Exception as e:
         conn.rollback()
-        print(f"❌ Database error: {e}")
+        print(f"Database error: {e}")
         return jsonify({
             'success': False,
             'message': f'Database error: {str(e)}'
@@ -9679,7 +9679,7 @@ def debug_video_upload():
     user_id = session.get('user_id')
 
     print("\n" + "=" * 60)
-    print("🔍 DEBUG VIDEO UPLOAD")
+    print(" DEBUG VIDEO UPLOAD")
     print("=" * 60)
     print(f"Form data: {dict(request.form)}")
     print(f"Files: {request.files}")
@@ -9699,7 +9699,7 @@ def debug_video_upload():
         print(f"Saved to: {temp_path}")
         print(f"File exists: {os.path.exists(temp_path)}")
     else:
-        print("❌ No video_file in request.files")
+        print("No video_file in request.files")
 
     print("=" * 60)
 
@@ -9767,7 +9767,7 @@ def generate_verification_token():
 def send_vendor_notification(vendor_email, vendor_name, subject, message, action_type):
     """Send a notification email to a vendor about admin actions."""
     if not EMAIL_USER or not EMAIL_PASSWORD:
-        print(f"📧 [SKIPPED] Email not configured. Would send to {vendor_email}: {subject}")
+        print(f" [SKIPPED] Email not configured. Would send to {vendor_email}: {subject}")
         return False
 
     html_content = f"""
@@ -9836,11 +9836,11 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
             server.login(EMAIL_USER, EMAIL_PASSWORD.replace(' ', ''))
             server.send_message(msg)
 
-        print(f"✅ Vendor notification email sent to {vendor_email}")
+        print(f"Vendor notification email sent to {vendor_email}")
         return True
 
     except Exception as e:
-        print(f"❌ Failed to send vendor notification: {e}")
+        print(f"Failed to send vendor notification: {e}")
         return False
 
 
@@ -9953,7 +9953,7 @@ def send_verification_email(email, full_name, verification_token, verification_c
     # If email not configured, print to console
     if not EMAIL_USER or not EMAIL_PASSWORD:
         print(f"\n{'=' * 70}")
-        print(f"📧 VERIFICATION EMAIL (SMTP NOT CONFIGURED)")
+        print(f" VERIFICATION EMAIL (SMTP NOT CONFIGURED)")
         print(f"To: {email}")
         print(f"Subject: {subject}")
         print(f"Link: {verification_url}")
@@ -9977,11 +9977,11 @@ def send_verification_email(email, full_name, verification_token, verification_c
             server.login(EMAIL_USER, password)
             server.send_message(msg)
 
-        print(f"✅ Verification email sent to: {email} (Code: {verification_code})")
+        print(f"Verification email sent to: {email} (Code: {verification_code})")
         return True
 
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        print(f" Failed to send email: {e}")
         return False
 
 
@@ -11443,7 +11443,7 @@ def send_password_reset_email(email, full_name, reset_token):
     # If email not configured, print to console
     if not EMAIL_USER or not EMAIL_PASSWORD:
         print(f"\n{'=' * 70}")
-        print(f"📧 PASSWORD RESET EMAIL (SMTP NOT CONFIGURED)")
+        print(f" PASSWORD RESET EMAIL (SMTP NOT CONFIGURED)")
         print(f"To: {email}")
         print(f"Subject: {subject}")
         print(f"Link: {reset_url}")
@@ -11466,11 +11466,11 @@ def send_password_reset_email(email, full_name, reset_token):
             server.login(EMAIL_USER, password)
             server.send_message(msg)
 
-        print(f"✅ Password reset email sent to: {email}")
+        print(f"Password reset email sent to: {email}")
         return True
 
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        print(f"Failed to send email: {e}")
         return False
 
 
@@ -11565,7 +11565,7 @@ def send_otp_email(email, full_name, otp):
 
     if not EMAIL_USER or not EMAIL_PASSWORD:
         print(f"\n{'=' * 70}")
-        print(f"📧 OTP EMAIL (SMTP NOT CONFIGURED)")
+        print(f" OTP EMAIL (SMTP NOT CONFIGURED)")
         print(f"To: {email}")
         print(f"Subject: {subject}")
         print(f"OTP: {otp}")
@@ -11588,11 +11588,11 @@ def send_otp_email(email, full_name, otp):
             server.login(EMAIL_USER, password)
             server.send_message(msg)
 
-        print(f"✅ OTP email sent to: {email}")
+        print(f"TP email sent to: {email}")
         return True
 
     except Exception as e:
-        print(f"❌ Failed to send OTP: {e}")
+        print(f"Failed to send OTP: {e}")
         return False
 
 
