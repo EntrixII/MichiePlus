@@ -341,12 +341,12 @@ def set_security_headers(response):
     # inline scripts/styles used throughout the existing templates).
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://unpkg.com https://js.paystack.co; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: https:; "
-        "frame-src https://challenges.cloudflare.com; "
-        "connect-src 'self' https://challenges.cloudflare.com;"
+        "frame-src https://challenges.cloudflare.com https://checkout.paystack.com; "
+        "connect-src 'self' https://challenges.cloudflare.com https://api.paystack.co;"
     )
     return response
 
@@ -10925,6 +10925,33 @@ def _marketplace_product_query(search=None, category=None):
     return query, params
 
 
+def _marketplace_course_query(search=None, category=None):
+    # Mirrors _marketplace_product_query above so courses show up in the
+    # marketplace grid the same way products do -- previously this
+    # function didn't exist and the marketplace route never queried
+    # courses at all, so only products ever appeared.
+    clauses = ["c.is_active = 1", "c.is_approved = 1"]
+    params = []
+    if search:
+        clauses.append(
+            "(c.title LIKE %s OR COALESCE(c.description, '') LIKE %s OR COALESCE(c.category, '') LIKE %s OR COALESCE(v.business_name, u.full_name, '') LIKE %s)")
+        like = f'%{search}%';
+        params.extend([like, like, like, like])
+    if category:
+        clauses.append('c.category = %s');
+        params.append(category)
+    query = f'''SELECT c.id, c.title, c.description, c.category, c.price, c.cover_image,
+                       c.level, c.rating, c.reviews_count, c.enrolled_students,
+                       c.created_at, c.vendor_id,
+                       COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor') AS vendor_name
+                FROM courses c
+                JOIN users u ON c.vendor_id = u.id
+                LEFT JOIN vendor_profiles v ON c.vendor_id = v.user_id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY c.is_featured DESC, c.created_at DESC'''
+    return query, params
+
+
 @app.route('/marketplace')
 @login_required
 def marketplace():
@@ -10934,19 +10961,37 @@ def marketplace():
         category = request.args.get('category', '').strip()[:100]
         conn = get_db_connection();
         cursor = conn.cursor()
+
         query, params = _marketplace_product_query(search, category)
         cursor.execute(query, params);
         products = [dict(row) for row in cursor.fetchall()]
+        for row in products:
+            row['item_type'] = 'product'
+
+        course_query, course_params = _marketplace_course_query(search, category)
+        cursor.execute(course_query, course_params);
+        courses = [dict(row) for row in cursor.fetchall()]
+        for row in courses:
+            row['item_type'] = 'course'
+
+        # Blend both into one feed, newest first, so courses actually show
+        # up in the marketplace grid instead of only products.
+        listings = products + courses
+        listings.sort(key=lambda row: row['created_at'], reverse=True)
+
         cursor.execute(
-            "SELECT DISTINCT category FROM products WHERE is_active = 1 AND is_approved = 1 AND category IS NOT NULL AND category <> '' ORDER BY category")
+            "SELECT DISTINCT category FROM products WHERE is_active = 1 AND is_approved = 1 AND category IS NOT NULL AND category <> '' "
+            "UNION "
+            "SELECT DISTINCT category FROM courses WHERE is_active = 1 AND is_approved = 1 AND category IS NOT NULL AND category <> '' "
+            "ORDER BY category")
         categories = [row['category'] for row in cursor.fetchall()]
-        return render_template('marketplace.html', products=products, categories=categories, search=search,
+        return render_template('marketplace.html', listings=listings, categories=categories, search=search,
                                selected_category=category)
     except Exception as exc:
         app.logger.exception('marketplace_load_error endpoint=%s user_id=%s error_type=%s message=%s', request.path,
                              _api_user_id(), type(exc).__name__, str(exc))
         flash('Marketplace could not be loaded. See the Flask terminal for the exact database error.', 'error')
-        return render_template('marketplace.html', products=[], categories=[], search='', selected_category='',
+        return render_template('marketplace.html', listings=[], categories=[], search='', selected_category='',
                                page_error='Marketplace load failed.'), 500
     finally:
         if cursor: cursor.close()

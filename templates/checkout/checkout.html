@@ -234,7 +234,11 @@
     </div>
 
     <script>
-        lucide.createIcons();
+        if (typeof lucide !== 'undefined') {
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        }
 
         {% if not already_purchased %}
         function setStatus(message, isError) {
@@ -247,50 +251,73 @@
             const payButton = document.getElementById('payButton');
             payButton.disabled = false;
             payButton.innerHTML = `<i data-lucide="lock" class="icon"></i> Pay ₦{{ '%.2f'|format(total_price) }}`;
-            lucide.createIcons();
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
         }
 
         function openPaystackPopup(data) {
-            if (typeof PaystackPop !== 'undefined' && data.access_code) {
-                const popup = new PaystackPop();
-                popup.checkout({
-                    accessCode: data.access_code,
-                    onSuccess: function (transaction) {
-                        setStatus('Payment received, verifying…');
-                        window.location.href =
-                            '{{ url_for("verify_payment") }}?reference=' + encodeURIComponent(transaction.reference);
-                    },
-                    onClose: function () {
-                        setStatus('Payment window closed. You can try again.');
-                        resetButton();
-                    },
-                });
-                return;
+            try {
+                if (data.access_code && typeof PaystackPop !== 'undefined') {
+                    const popup = new PaystackPop();
+                    popup.resumeTransaction(data.access_code, {
+                        onSuccess: function (transaction) {
+                            setStatus('Payment received, verifying…');
+                            window.location.href =
+                                '{{ url_for("verify_payment") }}?reference=' +
+                                encodeURIComponent(transaction.reference);
+                        },
+                        onCancel: function () {
+                            setStatus('Payment window closed. You can try again.');
+                            resetButton();
+                        }
+                    });
+                    return;
+                }
+                if (data.authorization_url) {
+                    window.location.assign(data.authorization_url);
+                    return;
+                }
+                throw new Error('Paystack did not return an access code or authorization URL.');
+            } catch (error) {
+                console.error('Unable to open Paystack checkout:', error);
+                if (data && data.authorization_url) {
+                    window.location.assign(data.authorization_url);
+                    return;
+                }
+                setStatus('Unable to open the payment window. Please try again.', true);
+                resetButton();
             }
-            if (data.authorization_url) {
-                window.location.href = data.authorization_url;
-                return;
-            }
-            setStatus('Unable to open the payment window. Please try again.', true);
-            resetButton();
         }
 
         function initiatePayment() {
             const payButton = document.getElementById('payButton');
             payButton.disabled = true;
             payButton.innerHTML = `<i data-lucide="loader-2" class="icon" style="animation: spin 1s linear infinite;"></i> Processing...`;
-            lucide.createIcons();
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
             setStatus('Setting up your payment…');
 
-            fetch('/api/checkout/initiate', {
+            fetch('{{ url_for("api_initiate_checkout") }}', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                credentials: 'same-origin',
                 body: JSON.stringify({
                     item_type: '{{ item_type }}',
                     item_id: {{ item.id }}
                 })
             })
-                .then((response) => response.json().then((body) => ({ ok: response.ok, body })))
+                .then(async (response) => {
+                    const contentType = response.headers.get('content-type') || '';
+                    const body = contentType.includes('application/json')
+                        ? await response.json()
+                        : { message: await response.text() };
+                    return { ok: response.ok, body };
+                })
                 .then(({ ok, body }) => {
                     if (!ok || !body.success) {
                         setStatus(body.message || 'Failed to initiate payment. Please try again.', true);

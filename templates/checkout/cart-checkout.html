@@ -256,14 +256,13 @@
             // tampered with from the browser.
             if (typeof PaystackPop !== 'undefined' && data.access_code) {
                 const popup = new PaystackPop();
-                popup.checkout({
-                    accessCode: data.access_code,
+                popup.resumeTransaction(data.access_code, {
                     onSuccess: function (transaction) {
                         setStatus('Payment received, verifying…');
                         window.location.href =
                             '{{ url_for("verify_cart_payment") }}?reference=' + encodeURIComponent(transaction.reference);
                     },
-                    onClose: function () {
+                    onCancel: function () {
                         setStatus('Payment window closed. You can try again.');
                         resetButton();
                     },

@@ -906,7 +906,19 @@
         </div>
     </div>
     <script>
-        lucide.createIcons();
+        // Guards every lucide.createIcons() call below: the icon set loads
+        // from an external CDN (unpkg.com), and if that request is blocked
+        // or fails (ad blocker, firewall, CDN hiccup), an unguarded call
+        // here throws and aborts this entire script block before the
+        // modal controls and click handlers further down ever get set up
+        // -- which is what made "Add Lesson" (and every other button on
+        // this page) silently do nothing on click.
+        function safeCreateIcons() {
+            if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                lucide.createIcons();
+            }
+        }
+        safeCreateIcons();
 
         // ===== MODAL CONTROLS =====
         const modal = document.getElementById('lessonModal');
@@ -925,7 +937,7 @@
         function openModal() {
             modal.classList.add('active');
             document.body.style.overflow = 'hidden';
-            lucide.createIcons();
+            safeCreateIcons();
         }
 
         function closeModal() {
@@ -998,7 +1010,7 @@
                 <i data-lucide="loader-2" class="icon" style="animation: spin 1s linear infinite;"></i>
                 Saving...
             `;
-            lucide.createIcons();
+            safeCreateIcons();
 
             const formData = new FormData(this);
 
@@ -1018,7 +1030,7 @@
                         <i data-lucide="check" class="icon"></i>
                         Save Lesson
                     `;
-                    lucide.createIcons();
+                    safeCreateIcons();
                 }
             })
             .catch(error => {
@@ -1028,7 +1040,7 @@
                     <i data-lucide="check" class="icon"></i>
                     Save Lesson
                 `;
-                lucide.createIcons();
+                safeCreateIcons();
             });
         });
 

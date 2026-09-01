@@ -270,6 +270,20 @@
       transform: scale(1.04);
     }
 
+    .type-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(17, 24, 39, 0.75);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 999px;
+    }
+
     .placeholder {
       font-size: 40px;
       color: #a5b4fc;
@@ -419,7 +433,7 @@
 
   <section class="hero">
     <h1>Find something useful.</h1>
-    <p>Explore approved digital products from MichiePlus vendors.</p>
+    <p>Explore approved products and courses from MichiePlus vendors.</p>
   </section>
 
   <section class="filters">
@@ -439,28 +453,29 @@
     <div class="notice">{{ page_error }} Check the Flask terminal for the full traceback.</div>
   {% endif %}
 
-  {% if products %}
-    <section class="grid" aria-label="Marketplace products">
-      {% for product in products %}
+  {% if listings %}
+    <section class="grid" aria-label="Marketplace listings">
+      {% for item in listings %}
         <article class="card">
-          <a class="card-image" href="{{ url_for('product_detail', product_id=product.id) }}">
-            {% if product.cover_image %}
-              <img src="{{ product.cover_image|e }}" alt="{{ product.title|e }}">
+          <a class="card-image" href="{% if item.item_type == 'course' %}{{ url_for('course_detail', course_id=item.id) }}{% else %}{{ url_for('product_detail', product_id=item.id) }}{% endif %}">
+            {% if item.cover_image %}
+              <img src="{{ item.cover_image|e }}" alt="{{ item.title|e }}">
             {% else %}
               <span class="placeholder">▧</span>
             {% endif %}
+            <span class="type-badge">{{ 'Course' if item.item_type == 'course' else 'Product' }}</span>
           </a>
           <div class="body">
-            <div class="eyebrow">{{ product.category or 'Digital product' }} · {{ product.vendor_name }}</div>
-            <h2 class="title">{{ product.title }}</h2>
-            <p class="description">{{ product.description or 'A useful resource from a verified MichiePlus vendor.' }}</p>
+            <div class="eyebrow">{{ item.category or ('Course' if item.item_type == 'course' else 'Digital product') }} · {{ item.vendor_name }}</div>
+            <h2 class="title">{{ item.title }}</h2>
+            <p class="description">{{ item.description or 'A useful resource from a verified MichiePlus vendor.' }}</p>
             <div class="meta">
-              <span class="price">₦{{ '%.2f'|format(product.price) }}</span>
-              <span class="rating">★ {{ product.rating or '0.00' }}</span>
+              <span class="price">₦{{ '%.2f'|format(item.price) }}</span>
+              <span class="rating">★ {{ item.rating or '0.00' }}</span>
             </div>
             <div class="actions">
-              <a class="view" href="{{ url_for('product_detail', product_id=product.id) }}">Details</a>
-              <button class="add" data-product-id="{{ product.id }}">Add to cart</button>
+              <a class="view" href="{% if item.item_type == 'course' %}{{ url_for('course_detail', course_id=item.id) }}{% else %}{{ url_for('product_detail', product_id=item.id) }}{% endif %}">Details</a>
+              <button class="add" data-item-id="{{ item.id }}" data-item-type="{{ item.item_type }}">Add to cart</button>
             </div>
           </div>
         </article>
@@ -468,7 +483,7 @@
     </section>
   {% else %}
     <div class="empty">
-      <h2>No products found</h2>
+      <h2>No products or courses found</h2>
       <p>Try another search or category.</p>
     </div>
   {% endif %}
@@ -476,9 +491,9 @@
 
 <script src="{{ url_for('static', filename='js/cart.js') }}"></script>
 <script>
-  document.querySelectorAll('[data-product-id]').forEach((button) => {
+  document.querySelectorAll('[data-item-id]').forEach((button) => {
     button.addEventListener('click', () => {
-      MichiePlusCart.addToCart(Number(button.dataset.productId), { itemType: 'product', quantity: 1, button });
+      MichiePlusCart.addToCart(Number(button.dataset.itemId), { itemType: button.dataset.itemType, quantity: 1, button });
     });
   });
   MichiePlusCart.refreshCartBadge();
