@@ -203,7 +203,14 @@ footer{text-align:center;color:var(--muted);font-size:11px;padding:0 16px 30px;o
         <div class="total-price">{{ currency_symbol|default('₦') }}{{ total|default(price|default(0)) }}</div>
       </div>
 
-      <button id="pay-button" class="cta" type="button">Pay securely with Paystack</button>
+      <button
+        id="pay-button"
+        class="cta"
+        type="button"
+        data-item-type="{{ item_type }}"
+        data-item-id="{{ item.id }}"
+        data-init-url="{{ url_for('api_initiate_checkout') }}"
+      >Pay securely with Paystack</button>
       <div id="checkout-notice" class="notice" role="alert"></div>
 
       <div class="guarantee"><span>🔒</span><span>Your payment details are handled securely by Paystack. MichiePlus does not store your card details.</span></div>
@@ -217,14 +224,11 @@ footer{text-align:center;color:var(--muted);font-size:11px;padding:0 16px 30px;o
 (() => {
             'use strict';
 
-            const button = document.getElementById('pay-button'); // Fixed ID from payButton to pay-button
-            const label = document.getElementById('payLabel');
-            const status = document.getElementById('checkout-notice'); // Fixed ID from statusLine to checkout-notice
-            const retry = document.getElementById('retryButton');
+            const button = document.getElementById('pay-button');
+            const status = document.getElementById('checkout-notice');
 
-            if (!button || !label || !status) return;
+            if (!button || !status) return;
 
-            const originalLabel = label.textContent;
             const itemType = button.dataset.itemType;
             const itemId = button.dataset.itemId;
             const initUrl = button.dataset.initUrl;

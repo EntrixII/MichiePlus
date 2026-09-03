@@ -1,349 +1,993 @@
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Checkout | MichiePlus</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure Checkout · MichiePlus</title>
+<meta name="theme-color" content="#0b0b10">
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Paystack Inline JS v2 -- this is what actually opens the payment
-         popup. Without this script tag, PaystackPop is never defined and
-         there is nothing to open, which is why the modal previously never
-         appeared. -->
-    <script src="https://js.paystack.co/v2/inline.js"></script>
+<style>
+:root{
+  --bg:#0b0b10;
+  --card:rgba(255,255,255,0.03);
+  --card-border:rgba(255,255,255,0.08);
+  --text:#e5e7eb;
+  --muted:#9ca3af;
+  --line:rgba(255,255,255,0.1);
+  --brand:#6c63ff;
+  --brand-glow:rgba(108,99,255,0.25);
+  --success:#10b981;
+  --danger:#ef4444;
+  --shadow:0 20px 60px rgba(0,0,0,0.5);
+  --radius:22px;
+}
 
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', sans-serif; background: #f4f6ff; color: #111827; min-height: 100vh; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 40px 20px 60px; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
-        .header h1 { font-size: 28px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
-        .header h1 span { color: #0000c1; }
-        .header .btn-back { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border: 1.5px solid #e5e7eb; border-radius: 10px; background: white; color: #4b5563; font-weight: 600; font-size: 14px; text-decoration: none; transition: 0.2s ease; }
-        .header .btn-back:hover { border-color: #0000c1; color: #0000c1; background: #f4f6ff; }
+*{box-sizing:border-box}
 
-        .checkout-layout { display: grid; grid-template-columns: 1fr 380px; gap: 32px; align-items: start; }
-        .checkout-card, .summary-card { background: white; border-radius: 20px; padding: 32px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.04); }
-        .checkout-card h2, .summary-card h2 { font-size: 20px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+body{
+  margin:0;
+  min-height:100vh;
+  font-family:'Inter',ui-sans-serif,system-ui,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at 10% 0%,rgba(108,99,255,0.12),transparent 40%),
+    radial-gradient(circle at 90% 100%,rgba(0,201,255,0.08),transparent 40%),
+    var(--bg);
+  overflow-x:hidden;
+}
 
-        .form-group { margin-bottom: 16px; }
-        .form-group label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #111827; }
-        .form-group input, .form-group select { width: 100%; padding: 12px 16px; border: 1.5px solid #e5e7eb; border-radius: 10px; font-size: 14px; font-family: 'Inter', sans-serif; transition: 0.2s ease; background: white; }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: #0000c1; box-shadow: 0 0 0 4px rgba(0, 0, 193,0.1); }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+body::before,
+body::after{
+  content:'';
+  position:fixed;
+  border-radius:50%;
+  filter:blur(120px);
+  z-index:-1;
+  pointer-events:none;
+}
 
-        .shipping-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid #e5e7eb; }
-        .shipping-section h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+body::before{
+  width:500px;
+  height:500px;
+  top:-200px;
+  left:-200px;
+  background:rgba(108,99,255,0.15);
+}
 
-        .summary-card { position: sticky; top: 20px; }
-        .summary-row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; color: #4b5563; }
-        .summary-row .value { font-weight: 600; }
-        .summary-divider { border: none; border-top: 1px solid #e5e7eb; margin: 12px 0; }
-        .summary-total { font-size: 20px; font-weight: 800; color: #0000c1; }
+body::after{
+  width:400px;
+  height:400px;
+  bottom:-150px;
+  right:-150px;
+  background:rgba(0,201,255,0.1);
+}
 
-        .status-line { text-align: center; color: #6b7280; font-size: 13px; margin-top: 16px; min-height: 18px; }
-        .status-line.error { color: #b42318; }
+.topbar{
+  height:72px;
+  background:rgba(11,11,16,0.8);
+  border-bottom:1px solid rgba(255,255,255,0.06);
+  backdrop-filter:blur(16px);
+  display:flex;
+  align-items:center;
+}
 
-        .pay-button { width: 100%; padding: 16px; background: linear-gradient(135deg, #0000c1, #1a1ae6); color: white; border: none; border-radius: 12px; font-size: 18px; font-weight: 700; cursor: pointer; transition: 0.3s ease; display: flex; align-items: center; justify-content: center; gap: 10px; }
-        .pay-button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 193,0.25); }
-        .pay-button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-        .pay-button .icon { width: 20px; height: 20px; }
+.topbar-inner,
+main{
+  width:min(1120px,calc(100% - 32px));
+  margin:auto;
+}
 
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.topbar-inner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+}
 
-        @media (max-width: 1024px) { .checkout-layout { grid-template-columns: 1fr; } .summary-card { position: static; } }
-        @media (max-width: 768px) { .form-row { grid-template-columns: 1fr; } .checkout-card, .summary-card { padding: 24px 20px; } }
-    </style>
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  text-decoration:none;
+  color:var(--text);
+  font-weight:800;
+  letter-spacing:-.03em;
+  font-size:20px;
+  font-family:'Space Grotesk',sans-serif;
+}
+
+.brand-mark{
+  width:38px;
+  height:38px;
+  border-radius:12px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(135deg,#6c63ff,#3f3d9e);
+  color:#fff;
+  font-weight:900;
+  box-shadow:0 0 20px var(--brand-glow);
+}
+
+.secure{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  color:var(--muted);
+  font-size:13px;
+  font-weight:600;
+}
+
+main{
+  padding:44px 0 64px;
+}
+
+.heading{
+  margin-bottom:28px;
+}
+
+.eyebrow{
+  margin:0 0 8px;
+  text-transform:uppercase;
+  letter-spacing:.13em;
+  font-size:11px;
+  font-weight:800;
+  color:var(--brand);
+}
+
+h1{
+  margin:0;
+  font-size:clamp(32px,5vw,46px);
+  line-height:1.04;
+  letter-spacing:-.045em;
+  font-family:'Space Grotesk',sans-serif;
+}
+
+.subtitle{
+  margin:12px 0 0;
+  color:var(--muted);
+  font-size:15px;
+  line-height:1.6;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:minmax(0,1.35fr) minmax(320px,.8fr);
+  gap:24px;
+  align-items:start;
+}
+
+.card{
+  background:var(--card);
+  border:1px solid var(--card-border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(12px);
+}
+
+.details{
+  padding:28px;
+}
+
+.summary{
+  padding:26px;
+  position:sticky;
+  top:20px;
+  border-color:rgba(108,99,255,0.2);
+  background:rgba(255,255,255,0.04);
+}
+
+.section-title{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin:0 0 22px;
+  font-size:17px;
+  letter-spacing:-.02em;
+  font-family:'Space Grotesk',sans-serif;
+}
+
+.number{
+  width:28px;
+  height:28px;
+  display:grid;
+  place-items:center;
+  border-radius:9px;
+  background:rgba(108,99,255,0.2);
+  color:#a5a3ff;
+  font-size:12px;
+  font-weight:850;
+  border:1px solid rgba(108,99,255,0.3);
+}
+
+.cart-list{
+  display:grid;
+  gap:12px;
+}
+
+.item{
+  display:flex;
+  gap:16px;
+  align-items:center;
+  padding:16px;
+  border:1px solid var(--line);
+  border-radius:17px;
+  background:rgba(255,255,255,0.02);
+}
+
+.item-icon{
+  width:58px;
+  height:58px;
+  flex:0 0 58px;
+  display:grid;
+  place-items:center;
+  border-radius:14px;
+  background:linear-gradient(135deg,#6c63ff,#3f3d9e);
+  color:#fff;
+  font-size:22px;
+  box-shadow:0 0 15px rgba(108,99,255,0.2);
+}
+
+.item-copy{
+  min-width:0;
+  flex:1;
+}
+
+.item-name{
+  margin:0;
+  font-size:16px;
+  font-weight:750;
+  overflow-wrap:anywhere;
+  color:#fff;
+}
+
+.item-meta{
+  margin:5px 0 0;
+  color:var(--muted);
+  font-size:13px;
+}
+
+.item-price{
+  font-size:14px;
+  font-weight:800;
+  color:#fff;
+  white-space:nowrap;
+}
+
+.empty{
+  padding:20px;
+  border:1px dashed var(--line);
+  border-radius:16px;
+  color:var(--muted);
+  text-align:center;
+}
+
+.divider{
+  height:1px;
+  background:var(--line);
+  margin:24px 0;
+}
+
+.pay-method{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  padding:15px 16px;
+  border:1px solid var(--line);
+  border-radius:16px;
+  margin-top:12px;
+  background:rgba(255,255,255,0.02);
+}
+
+.pay-method.active{
+  border-color:var(--brand);
+  box-shadow:0 0 15px rgba(108,99,255,0.15);
+}
+
+.pay-left{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.radio{
+  width:18px;
+  height:18px;
+  border:5px solid var(--brand);
+  border-radius:50%;
+  background:#fff;
+  box-shadow:0 0 0 1px #9ca3af;
+}
+
+.pay-title{
+  font-size:14px;
+  font-weight:750;
+}
+
+.pay-desc{
+  font-size:12px;
+  color:var(--muted);
+  margin-top:2px;
+}
+
+.pay-badge{
+  padding:7px 9px;
+  border-radius:9px;
+  background:rgba(108,99,255,0.2);
+  color:#a5a3ff;
+  font-size:11px;
+  font-weight:800;
+  border:1px solid rgba(108,99,255,0.3);
+}
+
+.customer{
+  display:grid;
+  gap:12px;
+}
+
+.field{
+  display:grid;
+  gap:7px;
+}
+
+.field label{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.field input,
+.field textarea,
+.field select{
+  width:100%;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:12px 13px;
+  background:rgba(255,255,255,0.03);
+  color:#fff;
+  font:inherit;
+  outline:none;
+}
+
+.field textarea{
+  min-height:90px;
+  resize:vertical;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus{
+  border-color:var(--brand);
+  box-shadow:0 0 0 3px rgba(108,99,255,.1);
+}
+
+.rows{
+  display:grid;
+  gap:13px;
+}
+
+.row{
+  display:flex;
+  justify-content:space-between;
+  gap:20px;
+  color:var(--muted);
+  font-size:14px;
+}
+
+.row strong{
+  color:var(--text);
+}
+
+.total{
+  display:flex;
+  justify-content:space-between;
+  gap:20px;
+  align-items:end;
+  margin-top:18px;
+  padding-top:18px;
+  border-top:1px dashed rgba(255,255,255,0.15);
+}
+
+.total-label{
+  font-size:13px;
+  color:var(--muted);
+}
+
+.total-price{
+  font-size:28px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:-.04em;
+  color:#fff;
+}
+
+.cta{
+  width:100%;
+  border:0;
+  border-radius:15px;
+  padding:16px 18px;
+  margin-top:22px;
+  background:linear-gradient(135deg,#6c63ff,#3f3d9e);
+  color:#fff;
+  font:inherit;
+  font-size:15px;
+  font-weight:800;
+  cursor:pointer;
+  transition:transform .15s,box-shadow .15s,opacity .15s;
+  box-shadow:0 12px 24px rgba(108,99,255,0.25);
+}
+
+.cta:hover{
+  transform:translateY(-1px);
+  box-shadow:0 15px 30px rgba(108,99,255,0.4);
+}
+
+.cta:active{
+  transform:none;
+}
+
+.cta:disabled{
+  opacity:.58;
+  cursor:not-allowed;
+  transform:none;
+}
+
+.guarantee{
+  margin-top:15px;
+  display:flex;
+  gap:9px;
+  justify-content:center;
+  align-items:center;
+  color:var(--muted);
+  font-size:11px;
+  text-align:center;
+  line-height:1.45;
+}
+
+.notice{
+  display:none;
+  margin-top:16px;
+  padding:13px 14px;
+  border-radius:13px;
+  font-size:13px;
+  line-height:1.45;
+}
+
+.notice.show{
+  display:block;
+}
+
+.notice.error{
+  background:rgba(239,68,68,0.1);
+  border:1px solid rgba(239,68,68,0.3);
+  color:var(--danger);
+}
+
+.notice.success{
+  background:rgba(16,185,129,0.1);
+  border:1px solid rgba(16,185,129,0.3);
+  color:var(--success);
+}
+
+.trust{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+  margin-top:20px;
+}
+
+.trust div{
+  padding:12px 8px;
+  text-align:center;
+  border:1px solid var(--line);
+  border-radius:13px;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:700;
+  line-height:1.35;
+  background:rgba(255,255,255,0.02);
+}
+
+.trust-icon{
+  display:block;
+  font-size:15px;
+  margin-bottom:5px;
+  color:var(--brand);
+}
+
+footer{
+  text-align:center;
+  color:var(--muted);
+  font-size:11px;
+  padding:0 16px 30px;
+  opacity:.6;
+}
+
+.spinner{
+  display:inline-block;
+  width:15px;
+  height:15px;
+  border:2px solid rgba(255,255,255,.35);
+  border-top-color:#fff;
+  border-radius:50%;
+  animation:spin .7s linear infinite;
+  vertical-align:-3px;
+  margin-right:8px;
+}
+
+@keyframes spin{
+  to{transform:rotate(360deg)}
+}
+
+@media(max-width:820px){
+  main{padding-top:30px}
+  .grid{grid-template-columns:1fr}
+  .summary{position:static}
+}
+
+@media(max-width:520px){
+  .topbar{height:64px}
+  .topbar-inner,
+  main{width:min(100% - 22px,1120px)}
+  .secure{font-size:11px}
+  .details,
+  .summary{padding:20px}
+  .item{padding:13px}
+  .item-icon{
+    width:50px;
+    height:50px;
+    flex-basis:50px
+  }
+  .trust{grid-template-columns:1fr}
+  .item-price{font-size:13px}
+}
+</style>
 </head>
+
 <body>
-    <div class="container page-transition">
-        <div class="header">
-            <h1>
-                <i data-lucide="credit-card" class="icon" style="width: 32px; height: 32px; color: #0000c1;"></i>
-                <span>Checkout</span>
-            </h1>
-            <a href="{{ url_for('view_cart') }}" class="btn-back">
-                <i data-lucide="arrow-left" class="icon"></i>
-                Back to Cart
-            </a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark">M</span>
+      <span>MichiePlus</span>
+    </a>
+    <div class="secure">🔒 Secure checkout</div>
+  </div>
+</header>
+
+<main>
+
+  <div class="heading">
+    <p class="eyebrow">Order &amp; payment</p>
+    <h1>Complete your purchase</h1>
+    <p class="subtitle">
+      Review your cart below. You'll be securely redirected to Paystack to complete payment.
+    </p>
+  </div>
+
+  <div class="grid">
+
+    <section class="card details">
+
+      <h2 class="section-title">
+        <span class="number">1</span>
+        Order details
+      </h2>
+
+      <div class="cart-list">
+
+        {% if cart_items %}
+          {% for item in cart_items %}
+            <div class="item">
+
+              <div class="item-icon">
+                {% if item.item_type == 'course' %}
+                  🎓
+                {% else %}
+                  🛍
+                {% endif %}
+              </div>
+
+              <div class="item-copy">
+                <p class="item-name">
+                  {{ item.title }}
+                </p>
+
+                <p class="item-meta">
+                  {% if item.item_type == 'course' %}
+                    Course · Instant access after payment
+                  {% elif item.is_digital %}
+                    Digital product · Instant access after payment
+                  {% else %}
+                    Physical product · Delivery available
+                  {% endif %}
+
+                  {% if item.quantity and item.quantity > 1 %}
+                    · Qty {{ item.quantity }}
+                  {% endif %}
+                </p>
+              </div>
+
+              <div class="item-price">
+                ₦{{ "{:,.2f}".format((item.price or 0)|float * (item.quantity or 1)) }}
+              </div>
+
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty">
+            Your cart is empty.
+          </div>
+        {% endif %}
+
+      </div>
+
+      <div class="divider"></div>
+
+      {% if has_physical_items %}
+
+      <h2 class="section-title">
+        <span class="number">2</span>
+        Delivery information
+      </h2>
+
+      <div class="customer">
+
+        <div class="field">
+          <label for="shipping_address">Shipping address</label>
+          <textarea
+            id="shipping_address"
+            name="shipping_address"
+            placeholder="Enter your delivery address"
+          ></textarea>
         </div>
 
-        <div class="checkout-layout">
-            <!-- LEFT COLUMN -->
-            <div class="checkout-card">
-                <h2>
-                    <i data-lucide="user" class="icon" style="width: 24px; height: 24px; color: #0000c1;"></i>
-                    Customer Information
-                </h2>
-
-                <div class="form-group">
-                    <label>Full Name</label>
-                    <input type="text" id="fullName" placeholder="John Doe" value="{{ customer.full_name or '' }}" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Email Address</label>
-                    <input type="email" id="email" placeholder="john@example.com" value="{{ customer.email or '' }}" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Phone Number</label>
-                    <input type="tel" id="phone" placeholder="+234 800 000 0000" value="{{ customer.phone_number or '' }}" required>
-                </div>
-
-                {% if has_physical_items %}
-                <div class="shipping-section">
-                    <h3>
-                        <i data-lucide="truck" style="width: 20px; height: 20px; color: #0000c1;"></i>
-                        Shipping Address
-                    </h3>
-
-                    <div class="form-group">
-                        <label>Address Line 1</label>
-                        <input type="text" id="shippingAddress1" placeholder="123 Main Street" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Address Line 2 (Optional)</label>
-                        <input type="text" id="shippingAddress2" placeholder="Apartment, Suite, etc.">
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>City</label>
-                            <input type="text" id="shippingCity" placeholder="Lagos" required>
-                        </div>
-                        <div class="form-group">
-                            <label>State</label>
-                            <input type="text" id="shippingState" placeholder="Lagos State" required>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Postal Code</label>
-                            <input type="text" id="shippingPostal" placeholder="100001">
-                        </div>
-                        <div class="form-group">
-                            <label>Country</label>
-                            <select id="shippingCountry" required>
-                                <option value="Nigeria">Nigeria</option>
-                                <option value="Ghana">Ghana</option>
-                                <option value="Kenya">Kenya</option>
-                                <option value="South Africa">South Africa</option>
-                                <option value="Other">Other</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- RIGHT COLUMN -->
-            <div class="summary-card">
-                <h2>
-                    <i data-lucide="shopping-bag" class="icon" style="width: 24px; height: 24px; color: #0000c1;"></i>
-                    Order Summary
-                </h2>
-
-                {% for item in cart_items %}
-                <div class="summary-row">
-                    <span>
-                        {{ item.title }}
-                        {% if item.item_type == 'course' %}
-                            (Course)
-                        {% elif item.is_digital %}
-                            (Digital)
-                        {% else %}
-                            (Physical)
-                        {% endif %}
-                    </span>
-                    <span class="value">₦{{ '%.2f'|format(item.price * item.quantity) }}</span>
-                </div>
-                {% endfor %}
-
-                <hr class="summary-divider">
-
-                <div class="summary-row">
-                    <span>Subtotal</span>
-                    <span class="value" id="subtotalDisplay">₦{{ '%.2f'|format(subtotal) }}</span>
-                </div>
-                <div class="summary-row">
-                    <span>VAT (7.5%)</span>
-                    <span class="value" id="vatDisplay">₦{{ '%.2f'|format(vat) }}</span>
-                </div>
-                {% if has_physical_items %}
-                <div class="summary-row shipping-row">
-                    <span>Shipping</span>
-                    <span class="value" id="shippingCostDisplay">₦0.00</span>
-                </div>
-                {% endif %}
-
-                <hr class="summary-divider">
-
-                <div class="summary-row summary-total">
-                    <span>Total</span>
-                    <span>₦<span id="totalDisplay">{{ '%.2f'|format(total_price) }}</span></span>
-                </div>
-
-                <button class="pay-button" id="payButton">
-                    <i data-lucide="lock" class="icon"></i>
-                    Pay ₦<span id="payAmount">{{ '%.2f'|format(total_price) }}</span>
-                </button>
-
-                <p class="status-line" id="statusLine">Secured by <strong>Paystack</strong></p>
-            </div>
+        <div class="field">
+          <label for="shipping_country">Country</label>
+          <select id="shipping_country" name="shipping_country">
+            <option value="">Select country</option>
+            <option value="Nigeria">Nigeria</option>
+          </select>
         </div>
-    </div>
 
-    <script>
-        lucide.createIcons();
+      </div>
 
-        const subtotal = {{ subtotal }};
-        const vat = {{ vat }};
-        const publicKey = {{ paystack_public_key|tojson }};
-        const customerEmail = {{ (customer.email or '')|tojson }};
-        const hasPhysicalItems = {{ 'true' if has_physical_items else 'false' }};
+      <div class="divider"></div>
 
-        // Client-side shipping estimate shown as the buyer picks a country.
-        // This is DISPLAY ONLY -- the amount actually charged always comes
-        // back from the server response after /api/checkout/cart/initiate,
-        // since the server looks the rate up itself rather than trusting
-        // whatever this script computes.
-        const SHIPPING_ESTIMATES = { Nigeria: 2000, Ghana: 5000, Kenya: 5000, 'South Africa': 8000 };
+      <h2 class="section-title">
+        <span class="number">3</span>
+        Payment method
+      </h2>
 
-        function estimatedShipping() {
-            if (!hasPhysicalItems) return 0;
-            const country = document.getElementById('shippingCountry').value;
-            return SHIPPING_ESTIMATES[country] ?? 10000;
-        }
+      {% else %}
 
-        function refreshTotals() {
-            const shipping = estimatedShipping();
-            const total = subtotal + vat + shipping;
-            if (hasPhysicalItems) {
-                document.getElementById('shippingCostDisplay').textContent = `₦${shipping.toFixed(2)}`;
-            }
-            document.getElementById('totalDisplay').textContent = total.toFixed(2);
-            document.getElementById('payAmount').textContent = total.toFixed(2);
-        }
+      <h2 class="section-title">
+        <span class="number">2</span>
+        Payment method
+      </h2>
 
-        if (hasPhysicalItems) {
-            document.getElementById('shippingCountry').addEventListener('change', refreshTotals);
-            refreshTotals();
-        }
+      {% endif %}
 
-        function setStatus(message, isError) {
-            const el = document.getElementById('statusLine');
-            el.textContent = message;
-            el.className = 'status-line' + (isError ? ' error' : '');
-        }
+      <div class="pay-method active">
+        <div class="pay-left">
+          <span class="radio"></span>
 
-        function resetButton() {
-            const payButton = document.getElementById('payButton');
-            payButton.disabled = false;
-            payButton.innerHTML = `<i data-lucide="lock" class="icon"></i> Pay ₦${document.getElementById('payAmount').textContent}`;
-            lucide.createIcons();
-        }
+          <div>
+            <div class="pay-title">Paystack</div>
+            <div class="pay-desc">
+              Cards, bank transfer and supported local methods
+            </div>
+          </div>
+        </div>
 
-        function openPaystackPopup(data) {
-            // Preferred path: a real popup using the server-issued access
-            // code, so the amount is locked server-side and can't be
-            // tampered with from the browser.
-            if (typeof PaystackPop !== 'undefined' && data.access_code) {
-                const popup = new PaystackPop();
-                popup.resumeTransaction(data.access_code, {
-                    onSuccess: function (transaction) {
-                        setStatus('Payment received, verifying…');
-                        window.location.href =
-                            '{{ url_for("verify_cart_payment") }}?reference=' + encodeURIComponent(transaction.reference);
-                    },
-                    onCancel: function () {
-                        setStatus('Payment window closed. You can try again.');
-                        resetButton();
-                    },
-                });
-                return;
-            }
-            // Fallback: if the Paystack script failed to load (blocked by
-            // an ad blocker, offline, CDN hiccup) fall back to the hosted
-            // redirect page instead of leaving the button stuck.
-            if (data.authorization_url) {
-                window.location.href = data.authorization_url;
-                return;
-            }
-            setStatus('Unable to open the payment window. Please try again.', true);
-            resetButton();
-        }
+        <span class="pay-badge">SECURE</span>
+      </div>
 
-        function initiatePayment() {
-            const payButton = document.getElementById('payButton');
+      <div class="trust">
+        <div>
+          <span class="trust-icon">🔐</span>
+          Encrypted payment
+        </div>
 
-            const fullName = document.getElementById('fullName').value.trim();
-            const email = document.getElementById('email').value.trim();
-            const phone = document.getElementById('phone').value.trim();
-            if (!fullName || !email || !phone) {
-                setStatus('Please fill in all customer information fields.', true);
-                return;
-            }
+        <div>
+          <span class="trust-icon">✓</span>
+          Verified checkout
+        </div>
 
-            let shippingAddress = null;
-            let shippingCountry = null;
-            if (hasPhysicalItems) {
-                const address1 = document.getElementById('shippingAddress1').value.trim();
-                const city = document.getElementById('shippingCity').value.trim();
-                const state = document.getElementById('shippingState').value.trim();
-                shippingCountry = document.getElementById('shippingCountry').value;
-                if (!address1 || !city || !state || !shippingCountry) {
-                    setStatus('Please fill in all required shipping fields.', true);
-                    return;
-                }
-                const address2 = document.getElementById('shippingAddress2').value.trim();
-                const postal = document.getElementById('shippingPostal').value.trim();
-                shippingAddress = `${fullName}\n${address1}${address2 ? '\n' + address2 : ''}\n${city}, ${state} ${postal}\n${shippingCountry}`;
-            }
+        <div>
+          <span class="trust-icon">↗</span>
+          Paystack secured
+        </div>
+      </div>
 
-            payButton.disabled = true;
-            payButton.innerHTML = `<i data-lucide="loader-2" class="icon" style="animation: spin 1s linear infinite;"></i> Processing...`;
-            lucide.createIcons();
-            setStatus('Setting up your payment…');
+    </section>
 
-            fetch('/api/checkout/cart/initiate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    shipping_address: shippingAddress,
-                    shipping_country: shippingCountry,
-                })
-            })
-                .then((response) => response.json().then((body) => ({ ok: response.ok, body })))
-                .then(({ ok, body }) => {
-                    if (!ok || !body.success) {
-                        setStatus(body.message || 'Failed to initiate payment. Please try again.', true);
-                        resetButton();
-                        return;
-                    }
-                    // Reconcile the displayed total with the server's
-                    // authoritative figures, in case the client-side
-                    // shipping estimate differed slightly.
-                    if (body.amount) {
-                        document.getElementById('totalDisplay').textContent = body.amount;
-                        document.getElementById('payAmount').textContent = body.amount;
-                    }
-                    openPaystackPopup(body);
-                })
-                .catch((error) => {
-                    console.error('Checkout initiate failed:', error);
-                    setStatus('Network error. Please try again.', true);
-                    resetButton();
-                });
-        }
+    <aside class="card summary">
 
-        document.getElementById('payButton').addEventListener('click', initiatePayment);
-    </script>
+      <h2 class="section-title">
+        Order summary
+      </h2>
+
+      <div class="rows">
+
+        <div class="row">
+          <span>Subtotal</span>
+          <strong>
+            ₦{{ "{:,.2f}".format((subtotal or 0)|float) }}
+          </strong>
+        </div>
+
+        <div class="row">
+          <span>VAT / tax</span>
+          <strong>
+            ₦{{ "{:,.2f}".format((vat or 0)|float) }}
+          </strong>
+        </div>
+
+      </div>
+
+      <div class="total">
+
+        <div class="total-label">
+          Total to pay
+        </div>
+
+        <div class="total-price">
+          ₦{{ "{:,.2f}".format((total_price or 0)|float) }}
+        </div>
+
+      </div>
+
+      <button
+        id="pay-button"
+        class="cta"
+        type="button"
+        data-init-url="{{ url_for('api_initiate_cart_checkout') }}"
+      >
+        <span>Pay securely with Paystack</span>
+      </button>
+
+      <div
+        id="checkout-notice"
+        class="notice"
+        role="alert"
+      ></div>
+
+      <div class="guarantee">
+        <span>🔒</span>
+        <span>
+          Your payment details are handled securely by Paystack.
+          MichiePlus does not store your card details.
+        </span>
+      </div>
+
+    </aside>
+
+  </div>
+
+</main>
+
+<footer>
+  MichiePlus · Secure payment
+</footer>
+
+<script>
+(() => {
+  'use strict';
+
+  const button = document.getElementById('pay-button');
+  const status = document.getElementById('checkout-notice');
+
+  if (!button || !status) return;
+
+  const initUrl = button.dataset.initUrl;
+
+  let busy = false;
+  let controller = null;
+
+  function setStatus(message, type = '') {
+    status.textContent = message;
+    status.className = 'notice show' + (type ? ' ' + type : '');
+  }
+
+  function setLoading(loading) {
+    busy = loading;
+    button.disabled = loading;
+
+    if (loading) {
+      button.innerHTML =
+        '<span class="spinner" aria-hidden="true"></span>' +
+        '<span>Connecting to Paystack…</span>';
+    } else {
+      button.innerHTML =
+        '<span>Pay securely with Paystack</span>';
+    }
+  }
+
+  function safeMessage(body, fallback) {
+    if (!body) return fallback;
+
+    const message = body.message || body.error;
+
+    return typeof message === 'string' && message.trim()
+      ? message.trim()
+      : fallback;
+  }
+
+  async function readResponse(response) {
+    const contentType =
+      (response.headers.get('content-type') || '').toLowerCase();
+
+    if (contentType.includes('application/json')) {
+      return await response.json();
+    }
+
+    const text = await response.text();
+
+    if (text && /<html|<!doctype/i.test(text)) {
+      throw new Error(
+        response.status === 401 || response.redirected
+          ? 'Your session has expired. Please log in again and retry the payment.'
+          : 'The server returned an unexpected response. Please try again.'
+      );
+    }
+
+    return {
+      success: false,
+      message: text || `Server returned HTTP ${response.status}.`
+    };
+  }
+
+  async function startPayment() {
+    if (busy) return;
+
+    if (!initUrl) {
+      setStatus(
+        'Checkout configuration is incomplete. Please return to your cart.',
+        'error'
+      );
+      return;
+    }
+
+    {% if has_physical_items %}
+    const shippingAddress =
+      document.getElementById('shipping_address')?.value.trim() || '';
+
+    const shippingCountry =
+      document.getElementById('shipping_country')?.value.trim() || '';
+
+    if (!shippingAddress) {
+      setStatus('Please enter your shipping address.', 'error');
+      return;
+    }
+
+    if (!shippingCountry) {
+      setStatus('Please select your shipping country.', 'error');
+      return;
+    }
+    {% else %}
+    const shippingAddress = '';
+    const shippingCountry = '';
+    {% endif %}
+
+    setLoading(true);
+    setStatus('Creating a secure payment session…');
+
+    controller = new AbortController();
+
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 30000);
+
+    try {
+
+      const response = await fetch(initUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        redirect: 'follow',
+
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+
+        body: JSON.stringify({
+          shipping_address: shippingAddress,
+          shipping_country: shippingCountry
+        }),
+
+        signal: controller.signal
+      });
+
+      const body = await readResponse(response);
+
+      if (!response.ok || !body || body.success !== true) {
+        throw new Error(
+          safeMessage(
+            body,
+            `Unable to initialize payment (HTTP ${response.status}).`
+          )
+        );
+      }
+
+      const authorizationUrl = body.authorization_url;
+
+      if (
+        !authorizationUrl ||
+        !/^https:\/\/(checkout\.)?paystack\.com\//i.test(
+          authorizationUrl
+        )
+      ) {
+        console.error(
+          'Invalid Paystack authorization URL:',
+          authorizationUrl
+        );
+
+        throw new Error(
+          'Paystack returned an invalid checkout link. Please try again.'
+        );
+      }
+
+      setStatus(
+        'Payment session ready. Opening Paystack…',
+        'success'
+      );
+
+      window.location.assign(authorizationUrl);
+
+    } catch (error) {
+
+      console.error(
+        'Cart checkout initialization error:',
+        error
+      );
+
+      let message =
+        error && error.message
+          ? error.message
+          : 'Unable to start payment. Please try again.';
+
+      if (error && error.name === 'AbortError') {
+        message =
+          'Payment setup took too long. Please try again.';
+      } else if (error instanceof TypeError) {
+        message =
+          'Unable to connect to MichiePlus. Please check your connection and try again.';
+      }
+
+      setStatus(message, 'error');
+      setLoading(false);
+
+    } finally {
+
+      clearTimeout(timeout);
+      controller = null;
+
+    }
+  }
+
+  button.addEventListener('click', startPayment);
+
+  button.addEventListener('keydown', event => {
+    if (
+      (event.key === 'Enter' || event.key === ' ') &&
+      busy
+    ) {
+      event.preventDefault();
+    }
+  });
+
+})();
+</script>
+
 </body>
 </html>
+```

@@ -7,6 +7,7 @@ import hashlib
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import requests  # Add this to imports at the top
+import time
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta
 import zipfile
@@ -46,56 +47,28 @@ Session(app)
 # --- FORCE HTTP FOR OAUTH (DEVELOPMENT ONLY) ---
 import os
 
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+IS_PRODUCTION = os.environ.get('FLASK_ENV', '').lower() == 'production'
 
-# Disable SSL verification globally
-import ssl
-
-ssl._create_default_https_context = ssl._create_unverified_context
-
-# Patch requests to skip verification
-import requests
-
-_original_request = requests.Session.request
-
-
-def _patched_request(self, *args, **kwargs):
-    kwargs['verify'] = False
-    return _original_request(self, *args, **kwargs)
-
-
-requests.Session.request = _patched_request
-
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-print(" SSL verification disabled for development")
+if not IS_PRODUCTION:
+    # Only relaxes the "must be https" check Flask-Dance/oauthlib does on the
+    # OAuth *redirect URI* so local http://127.0.0.1 callbacks work. It does
+    # NOT disable TLS certificate verification for any outbound request.
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 # ------------------------------------------------
 
-
-old_request = requests.Session.request
-
-
-# --- SSL FIX FOR DEVELOPMENT ---
-def new_request(self, *args, **kwargs):
-    kwargs['verify'] = False
-    return old_request(self, *args, **kwargs)
-
-
-old_request = requests.Session.request
-requests.Session.request = new_request
-
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-import ssl
-
-ssl._create_default_https_context = ssl._create_unverified_context
-# --------------------------------
-
-if os.environ.get('FLASK_ENV') != 'production':
-    print("SSL verification disabled for development")
+# NOTE: previous versions of this file globally monkey-patched
+# `requests.Session.request` (twice) and `ssl._create_default_https_context`
+# to skip TLS certificate verification for every outbound HTTPS call the
+# process makes — including calls to the live Paystack API. That's a real
+# man-in-the-middle risk for a payment integration (an attacker on the
+# network path could impersonate api.paystack.co and harvest bank details /
+# transfer recipients) and it was also the likely source of the intermittent
+# SSLEOFError "connection error" failures in the logs, since it forces every
+# `requests` call through a non-standard, unverified TLS path.
+#
+# Certificate verification is left ON everywhere now. If you ever need to
+# debug a *local* SSL issue, do it per-request (`requests.get(url,
+# verify=False)`) rather than patching the library globally.
 
 # ============================================
 # OAUTH CONFIGURATION - GOOGLE
@@ -108,12 +81,12 @@ DATABASE_URL = os.environ.get('DATABASE_URL', 'mysql://root:@localhost:3306/Mich
 # OAUTH CONFIGURATION - GOOGLE
 # ============================================
 
-# Fix SSL certificate verification
+# Point requests/urllib3 at certifi's CA bundle (this is the correct way to
+# fix "SSL certificate verify failed" errors — it points to a trusted CA
+# bundle, unlike disabling verification entirely).
 os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
-# Allow OAuth over HTTP for development
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 # Check if Google OAuth credentials are set
@@ -130,21 +103,9 @@ if os.environ.get("GOOGLE_OAUTH_CLIENT_ID") and os.environ.get("GOOGLE_OAUTH_CLI
         offline=False
     )
 
-    # Force SSL verification off on the blueprint's session
+    # Keep TLS certificate verification ON for Google's OAuth session.
     google_blueprint.session.verify = True
     google_blueprint.session.trust_env = False
-
-    # --- ADD THIS: Patch the session's request method directly ---
-    original_session_request = google_blueprint.session.request
-
-
-    def patched_session_request(self, *args, **kwargs):
-        kwargs['verify'] = False
-        return original_session_request(self, *args, **kwargs)
-
-
-    google_blueprint.session.request = patched_session_request.__get__(google_blueprint.session)
-    # ------------------------------------------------------------
 
     app.register_blueprint(google_blueprint, url_prefix="/login")
     print("google OAuth configured successfully")
@@ -155,6 +116,14 @@ else:
 # ============================================
 PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY', '')
 PAYSTACK_PUBLIC_KEY = os.environ.get('PAYSTACK_PUBLIC_KEY', '')
+
+if not IS_PRODUCTION and PAYSTACK_SECRET_KEY.startswith('sk_live'):
+    print(" WARNING: PAYSTACK_SECRET_KEY is a LIVE key but FLASK_ENV is not "
+          "'production'. Test-mode bank codes (e.g. 999991/999992) and test "
+          "card/account numbers will be rejected by Paystack against a live "
+          "key with 'invalid_bank_code' / 'Could not resolve account name'. "
+          "Use a sk_test_... key for local development, or real bank codes "
+          "and real account numbers if you intend to test against live data.")
 
 # ============================================
 # EMAIL CONFIGURATION
@@ -186,7 +155,6 @@ from urllib.parse import urlencode
 TURNSTILE_SITE_KEY = os.environ.get('TURNSTILE_SITE_KEY', '')
 TURNSTILE_SECRET_KEY = os.environ.get('TURNSTILE_SECRET_KEY', '')
 TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
-IS_PRODUCTION = os.environ.get('FLASK_ENV', '').lower() == 'production'
 
 # Dedicated urllib3 pool with certificate verification explicitly forced ON.
 # This is intentionally independent of the `requests` library so that the
@@ -580,7 +548,7 @@ def init_db():
     cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name='users'")
     if not cursor.fetchone():
         cursor.execute('''
-            CREATE TABLE users (
+            CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password_hash VARCHAR(255),
@@ -2770,77 +2738,96 @@ def view_cart():
     return render_template('cart.html')
 
 
+
 @app.route('/checkout/cart')
 @login_required
 def checkout_cart():
     user_id = session.get('user_id')
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Logged-in customer's own info, so the checkout form can be pre-filled
-    # instead of asking them to retype what we already know about them.
-    cursor.execute("SELECT full_name, email, phone_number FROM users WHERE id = %s", (user_id,))
-    customer = cursor.fetchone() or {}
+    try:
+        # Logged-in customer's own information
+        cursor.execute("""
+            SELECT full_name, email, phone_number
+            FROM users
+            WHERE id = %s
+        """, (user_id,))
 
-    # Fetch products
-    cursor.execute("""
-        SELECT 
-            c.id as cart_id,
-            c.item_type,
-            c.item_id,
-            c.quantity,
-            p.title,
-            p.price,
-            p.cover_image,
-            p.is_digital,
-            v.business_name as vendor_name,
-            p.vendor_id as vendor_id
-        FROM cart c
-        JOIN products p ON c.item_id = p.id
-        LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
-        WHERE c.user_id = %s AND c.item_type = 'product'
-    """, (user_id,))
-    products = cursor.fetchall()
+        customer = cursor.fetchone() or {}
 
-    # Fetch courses
-    cursor.execute("""
-        SELECT 
-            c.id as cart_id,
-            c.item_type,
-            c.item_id,
-            c.quantity,
-            co.title,
-            co.price,
-            co.cover_image,
-            NULL as is_digital,
-            v.business_name as vendor_name,
-            co.vendor_id as vendor_id
-        FROM cart c
-        JOIN courses co ON c.item_id = co.id
-        LEFT JOIN vendor_profiles v ON co.vendor_id = v.user_id
-        WHERE c.user_id = %s AND c.item_type = 'course'
-    """, (user_id,))
-    courses = cursor.fetchall()
+        # Fetch products in cart
+        cursor.execute("""
+            SELECT
+                c.id AS cart_id,
+                c.item_type,
+                c.item_id,
+                c.quantity,
+                p.title,
+                p.price,
+                p.cover_image,
+                p.is_digital,
+                v.business_name AS vendor_name,
+                p.vendor_id AS vendor_id
+            FROM cart c
+            JOIN products p ON c.item_id = p.id
+            LEFT JOIN vendor_profiles v
+                ON p.vendor_id = v.user_id
+            WHERE c.user_id = %s
+              AND c.item_type = 'product'
+        """, (user_id,))
 
-    cart_items = list(products) + list(courses)
-    pricing = _pricing_breakdown(cart_items)  # shipping added client-side once a country is picked
+        products = cursor.fetchall()
 
-    has_physical_items = any(
-        item['item_type'] == 'product' and item['is_digital'] == 0
-        for item in cart_items
-    )
+        # Fetch courses in cart
+        cursor.execute("""
+            SELECT
+                c.id AS cart_id,
+                c.item_type,
+                c.item_id,
+                c.quantity,
+                co.title,
+                co.price,
+                co.cover_image,
+                NULL AS is_digital,
+                v.business_name AS vendor_name,
+                co.vendor_id AS vendor_id
+            FROM cart c
+            JOIN courses co ON c.item_id = co.id
+            LEFT JOIN vendor_profiles v
+                ON co.vendor_id = v.user_id
+            WHERE c.user_id = %s
+              AND c.item_type = 'course'
+        """, (user_id,))
 
-    conn.close()
-    return render_template(
-        'checkout/cart-checkout.html',
-        cart_items=cart_items,
-        subtotal=pricing['subtotal'],
-        vat=pricing['vat'],
-        total_price=pricing['subtotal'] + pricing['vat'],
-        has_physical_items=has_physical_items,
-        customer=customer,
-        paystack_public_key=PAYSTACK_PUBLIC_KEY
-    )
+        courses = cursor.fetchall()
+
+        cart_items = list(products) + list(courses)
+
+        pricing = _pricing_breakdown(cart_items)
+
+        has_physical_items = any(
+            item['item_type'] == 'product'
+            and item['is_digital'] == 0
+            for item in cart_items
+        )
+
+        return render_template(
+            'checkout/cart-checkout.html',
+            cart_items=cart_items,
+            subtotal=pricing['subtotal'],
+            vat=pricing['vat'],
+            total_price=pricing['subtotal'] + pricing['vat'],
+            has_physical_items=has_physical_items,
+            customer=customer,
+            paystack_public_key=PAYSTACK_PUBLIC_KEY
+        )
+
+    finally:
+        conn.close()
+
+
 
 
 @app.route('/checkout/cart/verify')
@@ -2875,9 +2862,10 @@ def verify_cart_payment():
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}'}
 
-        # In development, always disable SSL verification to avoid SSL errors
-        # In production, set FLASK_ENV=production to enable verification
-        verify_ssl = os.environ.get('FLASK_ENV') == 'production'
+        # Certificate verification is always ON. This confirms real payments,
+        # so it must never talk to api.paystack.co over an unverified
+        # connection (an attacker could otherwise spoof a "success" response).
+        verify_ssl = True
 
         result = None
         max_retries = 3
@@ -4749,43 +4737,82 @@ def inject_support_settings():
     return {'support_settings': get_support_settings()}
 
 
+def _paystack_request_with_retry(method, url, max_attempts=3, backoff_seconds=1.0, **kwargs):
+    """
+    Call the Paystack API with a few retries on transient connection/SSL
+    failures (e.g. SSLEOFError, connection reset) before giving up.
+
+    Does NOT retry on a normal HTTP response from Paystack (even an error
+    status like 400/422) — only on the request itself failing to complete,
+    since a 400/422 is Paystack answering correctly and retrying won't
+    change that.
+
+    Raises the last exception if every attempt fails.
+    """
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return requests.request(method, url, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.SSLError) as exc:
+            last_exc = exc
+            print(f" Paystack request attempt {attempt}/{max_attempts} failed: {exc}")
+            if attempt < max_attempts:
+                time.sleep(backoff_seconds * attempt)  # simple linear backoff
+    raise last_exc
+
+
 @app.route('/api/banks')
 def get_banks():
-    """Get list of all Nigerian banks from Paystack"""
-    if not PAYSTACK_SECRET_KEY:
-        # Fallback to hardcoded list if no key
-        return jsonify({'banks': get_all_nigerian_banks()})
+    """Get list of Nigerian banks from Paystack."""
 
     try:
         url = "https://api.paystack.co/bank"
+
         headers = {
             'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
             'Content-Type': 'application/json'
         }
 
-        response = requests.get(url, headers=headers, timeout=30)
+        params = {
+            'country': 'nigeria',
+            'perPage': 100
+        }
+
+        response = _paystack_request_with_retry(
+            'GET',
+            url,
+            headers=headers,
+            params=params,
+            timeout=30
+        )
+
         result = response.json()
 
-        print(f" Banks API Response Status: {response.status_code}")
-        print(f" Banks API Response: {result.get('message') if not result.get('status') else 'Success'}")
+        print("Banks API Response Status:", response.status_code)
+        print("Banks API Response:", result.get('message'))
 
         if result.get('status') and result.get('data'):
             banks = []
+
             for bank in result['data']:
                 banks.append({
-                    'name': bank['name'],
-                    'code': bank['code']
+                    'name': bank.get('name', ''),
+                    'code': str(bank.get('code', ''))
                 })
+
+            print(f"Loaded {len(banks)} banks from Paystack")
+
             return jsonify({'banks': banks})
-        else:
-            print(f" Paystack error fetching banks: {result.get('message')}")
-            # Fallback to hardcoded list
-            return jsonify({'banks': get_all_nigerian_banks()})
+
+        print("Paystack did not return banks.")
+        return jsonify({'banks': get_all_nigerian_banks()})
 
     except Exception as e:
-        print(f"Error fetching banks: {e}")
-        # Fallback to hardcoded list
-        return jsonify({'banks': get_all_nigerian_banks()})
+        print("Error fetching banks:", e)
+
+        return jsonify({
+            'banks': get_all_nigerian_banks()
+        })
 
 
 @app.route('/api/verify-account', methods=['POST'])
@@ -4826,7 +4853,7 @@ def verify_account():
         print(f"   URL: {url}")
         print(f"   Params: {params}")
 
-        response = requests.get(url, params=params, headers=headers, timeout=30)
+        response = _paystack_request_with_retry('GET', url, params=params, headers=headers, timeout=30)
         result = response.json()
 
         print(f" Response Status: {response.status_code}")
@@ -5160,131 +5187,304 @@ def signup():
 
 @app.route('/choose-role', methods=['GET', 'POST'])
 def choose_role():
-    """Choose role page (customer or vendor) - Works for both email signup AND OAuth users"""
+    """Choose role page (customer or vendor) - Works for both email signup and OAuth users."""
 
     # Check if user is logged in (OAuth user) or temp_user (email signup)
     user_id = session.get('user_id')
     temp_user = session.get('temp_user')
 
-    # If user already completed onboarding, go to appropriate dashboard
+    # ---------------------------------------------------------
+    # EXISTING USER / OAUTH USER
+    # ---------------------------------------------------------
     if user_id and user_id != 'temp_user':
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT onboarding_completed, user_type FROM users WHERE id = %s", (user_id,))
-        user = cursor.fetchone()
-        conn.close()
 
-        if user:
+        try:
+            cursor.execute("""
+                SELECT id, email, onboarding_completed, user_type
+                FROM users
+                WHERE id = %s
+            """, (user_id,))
+
+            user = cursor.fetchone()
+
+            print("DEBUG EXISTING USER:", user)
+            print("DEBUG USER ID:", user_id)
+
+            # User ID exists in session but not in database
+            if not user:
+                print(f"ERROR: User ID {user_id} does not exist in users table.")
+
+                conn.close()
+
+                # Clear invalid session
+                session.pop('user_id', None)
+                session.pop('user_type', None)
+                session.pop('is_new_oauth_user', None)
+
+                flash(
+                    'Your account could not be found. Please sign up again.',
+                    'warning'
+                )
+
+                return redirect(url_for('signup'))
+
+            # If onboarding has already been completed
             if user['onboarding_completed'] == 1:
+
                 if user['user_type'] == 'customer':
+                    conn.close()
                     return redirect(url_for('customer_dashboard'))
+
                 elif user['user_type'] == 'vendor':
+                    conn.close()
                     return redirect(url_for('vendor_dashboard'))
+
+            # Vendor already selected but onboarding isn't complete
             elif user['user_type'] == 'vendor':
+                conn.close()
                 return redirect(url_for('vendor_step1'))
+
+            # Customer already selected
             elif user['user_type'] == 'customer':
+                conn.close()
                 return redirect(url_for('customer_dashboard'))
 
-    # If no user and no temp_user, redirect to signup
+        except Exception as e:
+            conn.close()
+            print("ERROR checking existing user:", e)
+
+            return jsonify({
+                'success': False,
+                'message': 'An error occurred while checking your account.'
+            }), 500
+
+        conn.close()
+
+    # ---------------------------------------------------------
+    # NO USER / NO TEMP USER
+    # ---------------------------------------------------------
     if not user_id and not temp_user:
         flash('Please sign up first.', 'warning')
         return redirect(url_for('signup'))
 
+    # ---------------------------------------------------------
+    # POST - USER SELECTED A ROLE
+    # ---------------------------------------------------------
     if request.method == 'POST':
-        data = request.get_json()
-        role = data.get('role', '').strip()
 
-        if role not in ['customer', 'vendor']:
-            return jsonify({'success': False, 'message': 'Invalid role'}), 400
+        try:
+            data = request.get_json(silent=True) or {}
+            role = data.get('role', '').strip().lower()
 
-        # Check if this is an OAuth user (has user_id in session)
-        if user_id and user_id != 'temp_user':
-            # OAuth user - update database directly
-            conn = get_db_connection()
-            cursor = conn.cursor()
-
-            # Update user_type
-            cursor.execute('''
-                UPDATE users 
-                SET user_type = %s
-                WHERE id = %s
-            ''', (role, user_id))
-
-            # Create appropriate profile
-            if role == 'customer':
-                cursor.execute('''
-                    INSERT INTO customer_profiles (user_id, username)
-                    VALUES (%s, %s)
-                    ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
-                ''', (user_id, f'user_{user_id}'))
-
-                # Mark onboarding as complete for customers
-                cursor.execute('''
-                    UPDATE users 
-                    SET onboarding_completed = 1
-                    WHERE id = %s
-                ''', (user_id,))
-
-                conn.commit()
-                conn.close()
-
-                session['user_type'] = role
-                session.pop('is_new_oauth_user', None)
-
+            # Validate role
+            if role not in ['customer', 'vendor']:
                 return jsonify({
-                    'success': True,
-                    'redirect': url_for('customer_dashboard')
-                })
+                    'success': False,
+                    'message': 'Invalid role selected.'
+                }), 400
 
-            elif role == 'vendor':
-                # Get user email for business email
-                cursor.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-                user = cursor.fetchone()
+            # =================================================
+            # OAUTH / DATABASE USER
+            # =================================================
+            if user_id and user_id != 'temp_user':
 
-                # Create vendor profile
-                cursor.execute('''
-                    INSERT INTO vendor_profiles (user_id, business_name, business_slug, business_email)
-                    VALUES (%s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
-                ''', (user_id, f'Business_{user_id}', f'business-{user_id}', user['email']))
+                conn = get_db_connection()
+                cursor = conn.cursor()
 
-                # Vendors start onboarding (not complete yet)
-                cursor.execute('''
-                    UPDATE users 
-                    SET onboarding_completed = 0
-                    WHERE id = %s
-                ''', (user_id,))
+                try:
+                    # -------------------------------------------------
+                    # IMPORTANT:
+                    # Verify that the user actually exists
+                    # -------------------------------------------------
+                    cursor.execute("""
+                        SELECT id, email
+                        FROM users
+                        WHERE id = %s
+                    """, (user_id,))
 
-                conn.commit()
-                conn.close()
+                    user = cursor.fetchone()
 
-                session['user_type'] = role
-                session.pop('is_new_oauth_user', None)
+                    print("DEBUG user:", user)
+                    print("DEBUG user_id:", user_id)
 
-                # ✅ Vendors go to vendor onboarding step 1
-                return jsonify({
-                    'success': True,
-                    'redirect': url_for('vendor_step1')
-                })
+                    # Prevent:
+                    # TypeError: 'NoneType' object is not subscriptable
+                    if not user:
+                        print(
+                            f"ERROR: No user found in users table "
+                            f"with id={user_id}"
+                        )
 
-        else:
-            # Email signup user - save to session (existing flow)
-            session['temp_user']['user_type'] = role
-            session['user_type'] = role
-            session['is_new_user'] = True
-            session['user_id'] = 'temp_user'
+                        conn.rollback()
+                        conn.close()
 
-            if role == 'customer':
-                return jsonify({
-                    'success': True,
-                    'redirect': url_for('customer_step1')
-                })
+                        # Clear invalid session
+                        session.pop('user_id', None)
+                        session.pop('user_type', None)
+                        session.pop('is_new_oauth_user', None)
+
+                        return jsonify({
+                            'success': False,
+                            'message': (
+                                'Your account could not be found. '
+                                'Please sign up again.'
+                            )
+                        }), 404
+
+                    # Get email safely
+                    user_email = user['email']
+
+                    # -------------------------------------------------
+                    # UPDATE USER ROLE
+                    # -------------------------------------------------
+                    cursor.execute("""
+                        UPDATE users
+                        SET user_type = %s
+                        WHERE id = %s
+                    """, (role, user_id))
+
+                    # =================================================
+                    # CUSTOMER
+                    # =================================================
+                    if role == 'customer':
+
+                        cursor.execute("""
+                            INSERT INTO customer_profiles
+                                (user_id, username)
+                            VALUES (%s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                username = VALUES(username)
+                        """, (
+                            user_id,
+                            f'user_{user_id}'
+                        ))
+
+                        # Customers complete onboarding immediately
+                        cursor.execute("""
+                            UPDATE users
+                            SET onboarding_completed = 1
+                            WHERE id = %s
+                        """, (user_id,))
+
+                        conn.commit()
+                        conn.close()
+
+                        session['user_type'] = 'customer'
+                        session.pop('is_new_oauth_user', None)
+
+                        return jsonify({
+                            'success': True,
+                            'redirect': url_for('customer_dashboard')
+                        })
+
+                    # =================================================
+                    # VENDOR
+                    # =================================================
+                    elif role == 'vendor':
+
+                        # Create vendor profile
+                        cursor.execute("""
+                            INSERT INTO vendor_profiles
+                                (
+                                    user_id,
+                                    business_name,
+                                    business_slug,
+                                    business_email
+                                )
+                            VALUES (%s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                business_name = VALUES(business_name),
+                                business_slug = VALUES(business_slug),
+                                business_email = VALUES(business_email)
+                        """, (
+                            user_id,
+                            f'Business_{user_id}',
+                            f'business-{user_id}',
+                            user_email
+                        ))
+
+                        # Vendor onboarding is NOT complete yet
+                        cursor.execute("""
+                            UPDATE users
+                            SET onboarding_completed = 0
+                            WHERE id = %s
+                        """, (user_id,))
+
+                        conn.commit()
+                        conn.close()
+
+                        session['user_type'] = 'vendor'
+                        session.pop('is_new_oauth_user', None)
+
+                        return jsonify({
+                            'success': True,
+                            'redirect': url_for('vendor_step1')
+                        })
+
+                except Exception as e:
+                    conn.rollback()
+                    conn.close()
+
+                    print("ERROR processing OAuth user role:", e)
+
+                    return jsonify({
+                        'success': False,
+                        'message': (
+                            'An error occurred while setting up '
+                            'your account.'
+                        )
+                    }), 500
+
+            # =================================================
+            # EMAIL SIGNUP / TEMP USER
+            # =================================================
             else:
-                return jsonify({
-                    'success': True,
-                    'redirect': url_for('vendor_step1')
-                })
 
+                # Make sure temp_user actually exists
+                if not temp_user:
+                    return jsonify({
+                        'success': False,
+                        'message': (
+                            'Your signup session has expired. '
+                            'Please sign up again.'
+                        )
+                    }), 400
+
+                # Store selected role temporarily
+                session['temp_user']['user_type'] = role
+                session['user_type'] = role
+                session['is_new_user'] = True
+                session['user_id'] = 'temp_user'
+
+                # Customer onboarding
+                if role == 'customer':
+                    return jsonify({
+                        'success': True,
+                        'redirect': url_for('customer_step1')
+                    })
+
+                # Vendor onboarding
+                else:
+                    return jsonify({
+                        'success': True,
+                        'redirect': url_for('vendor_step1')
+                    })
+
+        except Exception as e:
+
+            print("ERROR in choose_role POST:", e)
+
+            return jsonify({
+                'success': False,
+                'message': 'Something went wrong. Please try again.'
+            }), 500
+
+    # ---------------------------------------------------------
+    # GET - SHOW ROLE SELECTION PAGE
+    # ---------------------------------------------------------
     return render_template('choose-role.html')
 
 
@@ -7684,517 +7884,177 @@ def api_enroll_course():
 # UNIFIED CHECKOUT SYSTEM
 # ============================================
 
-# ============================================
-# SINGLE-ITEM CHECKOUT
-# ============================================
-
-def _checkout_json_error(code, message, status=400, details=None):
-    """Return a consistent JSON error for the checkout frontend."""
-    payload = {
-        'success': False,
-        'error': code,
-        'message': message,
-    }
-    if details is not None and app.debug:
-        payload['details'] = str(details)
-    return jsonify(payload), status
-
-
-def _paystack_ssl_verify():
-    """
-    Paystack SSL policy.
-
-    Production:
-        certificate verification is enabled.
-
-    Development:
-        preserve the application's existing development behaviour, where
-        SSL verification is disabled to avoid local certificate problems.
-    """
-    return os.environ.get('FLASK_ENV', '').lower() == 'production'
-
-
-def _paystack_headers():
-    """Build Paystack API headers without ever exposing the secret key."""
-    return {
-        'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-    }
-
-
-def _paystack_initialize(email, amount_kobo, reference, purchase_id,
-                         user_id, item_type, item_id):
-    """
-    Initialize one Paystack hosted checkout.
-
-    This deliberately uses Paystack's authorization_url rather than relying
-    on the browser-side PaystackPop/resumeTransaction flow.
-    """
-    if not PAYSTACK_SECRET_KEY:
-        raise RuntimeError('PAYSTACK_SECRET_KEY is not configured.')
-
-    amount_kobo = int(amount_kobo)
-    if amount_kobo <= 0:
-        raise ValueError('Payment amount must be greater than zero.')
-
-    callback_url = f"{BASE_URL.rstrip('/')}/checkout/verify"
-
-    payload = {
-        'email': email,
-        'amount': amount_kobo,
-        'reference': reference,
-        'currency': 'NGN',
-        'callback_url': callback_url,
-        'metadata': {
-            'purchase_id': int(purchase_id),
-            'user_id': int(user_id),
-            'item_type': item_type,
-            'item_id': int(item_id),
-        },
-    }
-
-    response = requests.post(
-        'https://api.paystack.co/transaction/initialize',
-        json=payload,
-        headers=_paystack_headers(),
-        verify=_paystack_ssl_verify(),
-        timeout=(10, 30),
-    )
-
-    # Paystack can return a non-JSON response on upstream/proxy failures.
-    try:
-        result = response.json()
-    except ValueError:
-        raise RuntimeError(
-            f'Paystack returned an invalid response (HTTP {response.status_code}).'
-        )
-
-    if response.status_code < 200 or response.status_code >= 300:
-        message = result.get('message') or (
-            f'Paystack returned HTTP {response.status_code}.'
-        )
-        raise RuntimeError(message)
-
-    if not result.get('status') or not isinstance(result.get('data'), dict):
-        raise RuntimeError(
-            result.get('message') or 'Paystack could not initialize the transaction.'
-        )
-
-    authorization_url = result['data'].get('authorization_url')
-    access_code = result['data'].get('access_code')
-
-    if not authorization_url:
-        raise RuntimeError('Paystack did not return a checkout URL.')
-
-    # The browser must only be sent to Paystack's HTTPS checkout.
-    if not authorization_url.startswith('https://checkout.paystack.com/'):
-        raise RuntimeError('Paystack returned an invalid checkout URL.')
-
-    return {
-        'authorization_url': authorization_url,
-        'access_code': access_code,
-        'reference': result['data'].get('reference') or reference,
-    }
-
-
-def _paystack_verify(reference):
-    """Verify a Paystack transaction server-side and return its data."""
-    if not PAYSTACK_SECRET_KEY:
-        raise RuntimeError('PAYSTACK_SECRET_KEY is not configured.')
-
-    reference = str(reference or '').strip()
-    if not reference or len(reference) > 255:
-        raise ValueError('Invalid payment reference.')
-
-    response = requests.get(
-        f'https://api.paystack.co/transaction/verify/{reference}',
-        headers=_paystack_headers(),
-        verify=_paystack_ssl_verify(),
-        timeout=(10, 30),
-    )
-
-    try:
-        result = response.json()
-    except ValueError:
-        raise RuntimeError(
-            f'Paystack returned an invalid verification response '
-            f'(HTTP {response.status_code}).'
-        )
-
-    if response.status_code < 200 or response.status_code >= 300:
-        raise RuntimeError(
-            result.get('message') or
-            f'Paystack verification failed (HTTP {response.status_code}).'
-        )
-
-    if not result.get('status') or not isinstance(result.get('data'), dict):
-        raise RuntimeError(
-            result.get('message') or 'Unable to verify payment with Paystack.'
-        )
-
-    return result['data']
-
-
 @app.route('/checkout/<item_type>/<int:item_id>')
 @login_required
 def checkout(item_type, item_id):
-    """Render the single-item checkout page for a course or product."""
+    """Unified checkout page for courses and products"""
     user_id = session.get('user_id')
 
-    if item_type not in ('course', 'product'):
+    if item_type not in ['course', 'product']:
         flash('Invalid item type.', 'error')
         return redirect(url_for('marketplace'))
 
-    conn = cursor = None
-    try:
-        conn = get_db_connection(timeout=20)
-        cursor = conn.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-        if item_type == 'course':
-            cursor.execute("""
-                SELECT
-                    c.id,
-                    c.title,
-                    c.price,
-                    c.vendor_id,
-                    COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor')
-                        AS vendor_name,
-                    'course' AS item_type
-                FROM courses c
-                JOIN users u ON c.vendor_id = u.id
-                LEFT JOIN vendor_profiles v ON c.vendor_id = v.user_id
-                WHERE c.id = %s
-                  AND c.is_active = 1
-                  AND c.is_approved = 1
-            """, (item_id,))
-        else:
-            cursor.execute("""
-                SELECT
-                    p.id,
-                    p.title,
-                    p.price,
-                    p.vendor_id,
-                    COALESCE(v.business_name, u.full_name, 'MichiePlus Vendor')
-                        AS vendor_name,
-                    'product' AS item_type,
-                    p.file_url
-                FROM products p
-                JOIN users u ON p.vendor_id = u.id
-                LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
-                WHERE p.id = %s
-                  AND p.is_active = 1
-                  AND p.is_approved = 1
-            """, (item_id,))
+    # Get item details based on type
+    if item_type == 'course':
+        cursor.execute("""
+            SELECT 
+                c.id,
+                c.title,
+                c.price,
+                c.vendor_id,
+                v.business_name as vendor_name,
+                'course' as item_type
+            FROM courses c
+            JOIN vendor_profiles v ON c.vendor_id = v.user_id
+            WHERE c.id = %s AND c.is_active = 1 AND c.is_approved = 1
+        """, (item_id,))
+    else:  # product
+        cursor.execute("""
+            SELECT 
+                p.id,
+                p.title,
+                p.price,
+                p.vendor_id,
+                v.business_name as vendor_name,
+                'product' as item_type,
+                p.file_url
+            FROM products p
+            JOIN vendor_profiles v ON p.vendor_id = v.user_id
+            WHERE p.id = %s AND p.is_active = 1 AND p.is_approved = 1
+        """, (item_id,))
 
-        item = cursor.fetchone()
+    item = cursor.fetchone()
 
-        if not item:
-            flash('Item not found or unavailable.', 'error')
-            return redirect(url_for('marketplace'))
-
-        if item_type == 'course':
-            cursor.execute("""
-                SELECT id
-                FROM enrollments
-                WHERE course_id = %s AND student_id = %s
-                LIMIT 1
-            """, (item_id, user_id))
-        else:
-            cursor.execute("""
-                SELECT id
-                FROM purchases
-                WHERE item_type = 'product'
-                  AND item_id = %s
-                  AND user_id = %s
-                  AND payment_status = 'completed'
-                UNION
-                SELECT id
-                FROM orders
-                WHERE product_id = %s
-                  AND customer_id = %s
-                  AND status = 'completed'
-                  AND payment_status = 'paid'
-                LIMIT 1
-            """, (item_id, user_id, item_id, user_id))
-
-        already_purchased = cursor.fetchone() is not None
-
-        price = Decimal(str(item['price'] or '0.00')).quantize(Decimal('0.01'))
-        vat = (price * VAT_RATE).quantize(Decimal('0.01'))
-        total_price = (price + vat).quantize(Decimal('0.01'))
-
-        return render_template(
-            'checkout/checkout.html',
-            item=dict(item),
-            item_type=item_type,
-            already_purchased=already_purchased,
-            subtotal=price,
-            vat=vat,
-            total_price=total_price,
-            paystack_public_key=PAYSTACK_PUBLIC_KEY
-        )
-
-    except Exception as exc:
-        app.logger.exception(
-            'checkout_page_error item_type=%s item_id=%s user_id=%s error=%s',
-            item_type, item_id, user_id, exc
-        )
-        flash('Unable to load checkout. Please try again.', 'error')
+    if not item:
+        conn.close()
+        flash('Item not found or unavailable.', 'error')
         return redirect(url_for('marketplace'))
 
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    # Check if user already purchased/enrolled
+    if item_type == 'course':
+        cursor.execute("""
+            SELECT id FROM enrollments 
+            WHERE course_id = %s AND student_id = %s
+        """, (item_id, user_id))
+    else:
+        cursor.execute("""
+            SELECT id FROM purchases 
+            WHERE item_type = 'product' AND item_id = %s AND user_id = %s AND payment_status = 'completed'
+            UNION
+            SELECT id FROM orders
+            WHERE product_id = %s AND customer_id = %s AND status = 'completed' AND payment_status = 'paid'
+        """, (item_id, user_id, item_id, user_id))
+
+    already_purchased = cursor.fetchone() is not None
+
+    conn.close()
+
+    price = item['price'] or Decimal('0.00')
+    vat = (price * VAT_RATE).quantize(Decimal('0.01'))
+    total_price = price + vat
+
+    return render_template(
+        'checkout/checkout.html',
+        item=dict(item),
+        item_type=item_type,
+        already_purchased=already_purchased,
+        subtotal=price,
+        vat=vat,
+        total_price=total_price,
+        paystack_public_key=PAYSTACK_PUBLIC_KEY
+    )
 
 
 @app.route('/api/checkout/initiate', methods=['POST'])
+@login_required
 def api_initiate_checkout():
-    """
-    Create a pending single-item purchase and initialize Paystack.
-
-    The server is authoritative for:
-      - item
-      - price
-      - VAT
-      - amount sent to Paystack
-      - vendor earnings
-      - platform fee
-    """
-    user_id = _api_user_id()
-    if user_id is None:
-        return _checkout_json_error(
-            'AUTH_REQUIRED',
-            'Please log in before starting checkout.',
-            401
-        )
-
+    """Initiate checkout - creates a pending purchase and returns Paystack URL"""
+    user_id = session.get('user_id')
     conn = cursor = None
-    item_type = None
-    item_id = None
-    purchase_id = None
-
     try:
-        data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            return _checkout_json_error(
-                'INVALID_REQUEST',
-                'Request body must be a JSON object.',
-                400
-            )
+        data = request.get_json(silent=True) or {}
+        item_type = data.get('item_type')
+        item_id = data.get('item_id')
 
-        item_type = str(data.get('item_type', '')).strip().lower()
-        if item_type not in ('course', 'product'):
-            return _checkout_json_error(
-                'INVALID_ITEM_TYPE',
-                'item_type must be course or product.',
-                400
-            )
+        if item_type not in ['course', 'product']:
+            return jsonify({'success': False, 'message': 'Invalid item type.'}), 400
 
-        try:
-            item_id = int(data.get('item_id'))
-        except (TypeError, ValueError):
-            return _checkout_json_error(
-                'INVALID_ITEM_ID',
-                'A valid item ID is required.',
-                400
-            )
-
-        if item_id < 1:
-            return _checkout_json_error(
-                'INVALID_ITEM_ID',
-                'A valid item ID is required.',
-                400
-            )
-
-        email = str(session.get('user_email') or '').strip().lower()
-        if not email or not is_valid_email(email):
-            # Do not trust a stale/missing session email. Fetch the user's
-            # current email from the database.
-            conn = get_db_connection(timeout=20)
-            cursor = conn.cursor()
-            cursor.execute(
-                'SELECT email, full_name FROM users WHERE id = %s LIMIT 1',
-                (user_id,)
-            )
-            current_user = cursor.fetchone()
-            if current_user:
-                email = str(current_user.get('email') or '').strip().lower()
-                if current_user.get('full_name'):
-                    session['user_name'] = current_user['full_name']
-
-            if not email or not is_valid_email(email):
-                return _checkout_json_error(
-                    'INVALID_CUSTOMER_EMAIL',
-                    'Your account does not have a valid email address. '
-                    'Please update your account and try again.',
-                    400
-                )
-
-            cursor.close()
-            conn.close()
-            cursor = conn = None
-
-        if not PAYSTACK_SECRET_KEY:
-            return _checkout_json_error(
-                'PAYMENT_NOT_CONFIGURED',
-                'Payment service is not configured on the server.',
-                503
-            )
-
-        conn = get_db_connection(timeout=20)
+        conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Lock the item row while its price/vendor are read. This prevents
-        # another request from changing the price during initialization.
+        # Get item details
         if item_type == 'course':
             cursor.execute("""
-                SELECT id, title, price, vendor_id
-                FROM courses
-                WHERE id = %s
-                  AND is_active = 1
-                  AND is_approved = 1
-                FOR UPDATE
+                SELECT id, title, price, vendor_id 
+                FROM courses 
+                WHERE id = %s AND is_active = 1 AND is_approved = 1
             """, (item_id,))
         else:
             cursor.execute("""
-                SELECT id, title, price, vendor_id
-                FROM products
-                WHERE id = %s
-                  AND is_active = 1
-                  AND is_approved = 1
-                FOR UPDATE
+                SELECT id, title, price, vendor_id 
+                FROM products 
+                WHERE id = %s AND is_active = 1 AND is_approved = 1
             """, (item_id,))
 
         item = cursor.fetchone()
+
         if not item:
-            conn.rollback()
-            return _checkout_json_error(
-                'ITEM_NOT_FOUND',
-                'Item not found or no longer available.',
-                404
-            )
+            return jsonify({'success': False, 'message': 'Item not found.'}), 404
 
-        vendor_id = int(item['vendor_id'])
-        if vendor_id == user_id:
-            conn.rollback()
-            return _checkout_json_error(
-                'SELF_PURCHASE',
-                'You cannot purchase your own item.',
-                400
-            )
-
-        # Prevent paying for something the customer already owns.
+        # Check if already purchased
         if item_type == 'course':
             cursor.execute("""
-                SELECT id
-                FROM enrollments
+                SELECT id FROM enrollments 
                 WHERE course_id = %s AND student_id = %s
-                LIMIT 1
             """, (item_id, user_id))
         else:
             cursor.execute("""
-                SELECT id
-                FROM purchases
-                WHERE item_type = 'product'
-                  AND item_id = %s
-                  AND user_id = %s
-                  AND payment_status = 'completed'
+                SELECT id FROM purchases 
+                WHERE item_type = 'product' AND item_id = %s AND user_id = %s AND payment_status = 'completed'
                 UNION
-                SELECT id
-                FROM orders
-                WHERE product_id = %s
-                  AND customer_id = %s
-                  AND status = 'completed'
-                  AND payment_status = 'paid'
-                LIMIT 1
+                SELECT id FROM orders
+                WHERE product_id = %s AND customer_id = %s AND status = 'completed' AND payment_status = 'paid'
             """, (item_id, user_id, item_id, user_id))
 
         if cursor.fetchone():
-            redirect_url = (
-                url_for('course_detail', course_id=item_id)
-                if item_type == 'course'
-                else url_for('product_detail', product_id=item_id)
-            )
-            conn.rollback()
             return jsonify({
                 'success': False,
-                'error': 'ALREADY_PURCHASED',
                 'message': 'You already own this item.',
-                'redirect': redirect_url
-            }), 409
+                'redirect': url_for('course_detail', course_id=item_id) if item_type == 'course' else url_for(
+                    'product_detail', product_id=item_id)
+            }), 400
 
-        price = Decimal(str(item['price'] or '0.00')).quantize(Decimal('0.01'))
-        if price < Decimal('0.00'):
-            conn.rollback()
-            return _checkout_json_error(
-                'INVALID_PRICE',
-                'This item has an invalid price.',
-                400
-            )
-
+        # Decimal-safe pricing: price comes back from MySQL as Decimal,
+        # so every multiplier here must be Decimal too (never a plain
+        # Python float) or this raises TypeError before we ever reach
+        # Paystack. VAT is added here so the amount charged always matches
+        # what's shown to the customer.
+        price = item['price'] or Decimal('0.00')
         vat = (price * VAT_RATE).quantize(Decimal('0.01'))
-        total_amount = (price + vat).quantize(Decimal('0.01'))
-
-        amount_kobo_decimal = (total_amount * Decimal('100')).quantize(Decimal('1'))
-        amount_kobo = int(amount_kobo_decimal)
-
-        if amount_kobo <= 0:
-            conn.rollback()
-            return _checkout_json_error(
-                'INVALID_AMOUNT',
-                'This item cannot be processed as a zero-value Paystack payment.',
-                400
-            )
-
-        # Vendor receives 70% of the item price; VAT is not included in the
-        # vendor's 70% calculation.
+        total_amount = price + vat
         vendor_earnings = (price * Decimal('0.70')).quantize(Decimal('0.01'))
         platform_fee = (price * Decimal('0.30')).quantize(Decimal('0.01'))
 
-        # A fresh reference is generated for every new payment attempt.
-        # Paystack references are unique and are also the local transaction ID.
-        reference = f"Michie_Bizspark-{secrets.token_hex(16).upper()}"
+        # Generate transaction reference
+        reference = f"Michie_Bizspark-{secrets.token_hex(12).upper()}"
 
-        # Remove abandoned pending records for the same item/user. They can
-        # otherwise accumulate when a customer opens checkout repeatedly.
-        cursor.execute("""
-            DELETE FROM purchases
-            WHERE user_id = %s
-              AND item_type = %s
-              AND item_id = %s
-              AND payment_status = 'pending'
-              AND created_at < (NOW() - INTERVAL 30 MINUTE)
-        """, (user_id, item_type, item_id))
-
+        # Create pending purchase record
         cursor.execute("""
             INSERT INTO purchases (
-                user_id,
-                item_type,
-                item_id,
-                item_title,
-                vendor_id,
-                amount,
-                vendor_earnings,
-                platform_fee,
-                transaction_id,
-                payment_status,
-                payment_method,
-                quantity
+                user_id, item_type, item_id, item_title, vendor_id,
+                amount, vendor_earnings, platform_fee, transaction_id, payment_status
             )
-            VALUES (
-                %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, 'pending',
-                NULL, 1
-            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+
         """, (
             user_id,
             item_type,
             item_id,
             item['title'],
-            vendor_id,
+            item['vendor_id'],
             total_amount,
             vendor_earnings,
             platform_fee,
@@ -8203,547 +8063,64 @@ def api_initiate_checkout():
 
         purchase_id = cursor.lastrowid
         conn.commit()
-
-        # Never hold a database connection open while waiting on Paystack.
         cursor.close()
         conn.close()
         cursor = conn = None
 
-        try:
-            paystack = _paystack_initialize(
-                email=email,
-                amount_kobo=amount_kobo,
-                reference=reference,
-                purchase_id=purchase_id,
-                user_id=user_id,
-                item_type=item_type,
-                item_id=item_id
-            )
-        except requests.exceptions.Timeout:
-            app.logger.error(
-                'paystack_initialize_timeout reference=%s purchase_id=%s',
-                reference, purchase_id
-            )
-            return _checkout_json_error(
-                'PAYSTACK_TIMEOUT',
-                'Paystack took too long to respond. Please try again.',
-                504
-            )
-        except requests.exceptions.RequestException as exc:
-            app.logger.exception(
-                'paystack_initialize_network_error reference=%s purchase_id=%s',
-                reference, purchase_id
-            )
-            return _checkout_json_error(
-                'PAYSTACK_CONNECTION_ERROR',
-                'Unable to connect to the payment service. Please try again.',
-                502,
-                exc
-            )
-        except (RuntimeError, ValueError) as exc:
-            app.logger.exception(
-                'paystack_initialize_failed reference=%s purchase_id=%s',
-                reference, purchase_id
-            )
-            return _checkout_json_error(
-                'PAYSTACK_INITIALIZE_FAILED',
-                str(exc),
-                502
-            )
+        # Initialize Paystack transaction
+        if not PAYSTACK_SECRET_KEY:
+            return jsonify({'success': False, 'message': 'Payment system not configured.'}), 500
 
-        return jsonify({
-            'success': True,
-            'authorization_url': paystack['authorization_url'],
+        url = "https://api.paystack.co/transaction/initialize"
+        headers = {
+            'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        payload = {
+            'email': session.get('user_email'),
+            'amount': int(total_amount * 100),  # Paystack expects amount in kobo
             'reference': reference,
-            'amount': _money(total_amount),
-            'subtotal': _money(price),
-            'vat': _money(vat),
-            'public_key': PAYSTACK_PUBLIC_KEY
-        }), 200
+            'metadata': {
+                'purchase_id': purchase_id,
+                'user_id': user_id,
+                'item_type': item_type,
+                'item_id': item_id
+            },
+            'callback_url': f"{BASE_URL}/checkout/verify"
+        }
 
-    except pymysql.err.IntegrityError as exc:
-        if conn:
-            conn.rollback()
-        app.logger.exception(
-            'checkout_integrity_error user_id=%s item_type=%s item_id=%s',
-            user_id, item_type, item_id
-        )
-        return _checkout_json_error(
-            'CHECKOUT_DATABASE_ERROR',
-            'Unable to create the payment record. Please try again.',
-            409,
-            exc
-        )
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        result = response.json()
+
+        if result.get('status') and result.get('data'):
+            return jsonify({
+                'success': True,
+                'authorization_url': result['data']['authorization_url'],
+                'access_code': result['data'].get('access_code'),
+                'reference': reference,
+                'amount': _money(total_amount),
+                'public_key': PAYSTACK_PUBLIC_KEY
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': result.get('message', 'Paystack initialization failed.')
+            }), 400
 
     except Exception as exc:
         if conn:
             conn.rollback()
-        _log_api_exception(
-            request.path, user_id, item_id, None, exc
-        )
-        return _checkout_json_error(
-            'CHECKOUT_INITIATE_FAILED',
-            'Unable to start checkout. Please try again.',
-            500,
-            exc
-        )
-
+        _log_api_exception(request.path, user_id, item_id, None, exc)
+        return jsonify({
+            'success': False,
+            'error': 'CHECKOUT_INITIATE_FAILED',
+            'message': 'Unable to start checkout. Please try again.',
+            'details': str(exc) if app.debug else None
+        }), 500
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route('/checkout/verify')
-@login_required
-def verify_payment():
-    """
-    Verify a single-item Paystack payment and atomically complete the order.
-
-    This endpoint is intentionally idempotent:
-    refreshing the Paystack callback URL cannot create another order,
-    another wallet credit, or another course enrollment.
-    """
-    reference = str(request.args.get('reference') or '').strip()
-    if not reference or len(reference) > 255:
-        flash('Invalid or missing payment reference.', 'error')
-        return redirect(url_for('marketplace'))
-
-    user_id = _api_user_id()
-    if user_id is None:
-        return redirect(url_for('login'))
-
-    if not PAYSTACK_SECRET_KEY:
-        flash('Payment system is not configured. Please contact support.', 'error')
-        return redirect(url_for('marketplace'))
-
-    # Verify with Paystack BEFORE changing any local payment state.
-    try:
-        payment = _paystack_verify(reference)
-    except requests.exceptions.Timeout:
-        flash('Payment verification timed out. Please try again.', 'error')
-        return redirect(url_for('marketplace'))
-    except requests.exceptions.RequestException:
-        app.logger.exception(
-            'paystack_verify_network_error reference=%s user_id=%s',
-            reference, user_id
-        )
-        flash('Unable to contact the payment service. Please try again.', 'error')
-        return redirect(url_for('marketplace'))
-    except (RuntimeError, ValueError) as exc:
-        app.logger.exception(
-            'paystack_verify_failed reference=%s user_id=%s',
-            reference, user_id
-        )
-        flash('Payment verification failed. Please contact support if you were charged.', 'error')
-        return redirect(url_for('marketplace'))
-
-    if str(payment.get('reference') or '').strip() != reference:
-        flash('Payment reference could not be verified.', 'error')
-        return redirect(url_for('marketplace'))
-
-    if str(payment.get('status') or '').lower() != 'success':
-        flash('Payment was not completed. No purchase was created.', 'error')
-        return redirect(url_for('marketplace'))
-
-    if str(payment.get('currency') or 'NGN').upper() != 'NGN':
-        flash('Payment currency is invalid.', 'error')
-        return redirect(url_for('marketplace'))
-
-    paystack_amount_kobo = payment.get('amount')
-    try:
-        paystack_amount_kobo = int(paystack_amount_kobo)
-    except (TypeError, ValueError):
-        flash('Paystack returned an invalid payment amount.', 'error')
-        return redirect(url_for('marketplace'))
-
-    conn = cursor = None
-    purchase = None
-    email_to_send = None
-    name_to_send = None
-
-    try:
-        conn = get_db_connection(timeout=20)
-        cursor = conn.cursor()
-
-        # Lock this purchase while completing it.
-        cursor.execute("""
-            SELECT *
-            FROM purchases
-            WHERE transaction_id = %s
-              AND user_id = %s
-            LIMIT 1
-            FOR UPDATE
-        """, (reference, user_id))
-        purchase = cursor.fetchone()
-
-        if not purchase:
-            conn.rollback()
-            flash('Purchase record not found. Please contact support.', 'error')
-            return redirect(url_for('marketplace'))
-
-        # If another request already completed it, never perform the
-        # side-effects a second time.
-        if purchase['payment_status'] == 'completed':
-            item_type = purchase['item_type']
-            item_id = purchase['item_id']
-            conn.commit()
-            return redirect(url_for(
-                'payment_success',
-                item_type=item_type,
-                item_id=item_id
-            ))
-
-        expected_amount_kobo = int(
-            (Decimal(str(purchase['amount'] or '0.00')) * Decimal('100'))
-            .quantize(Decimal('1'))
-        )
-
-        if paystack_amount_kobo != expected_amount_kobo:
-            app.logger.error(
-                'paystack_amount_mismatch reference=%s expected=%s received=%s',
-                reference, expected_amount_kobo, paystack_amount_kobo
-            )
-            conn.rollback()
-            flash('The payment amount could not be verified. Please contact support.', 'error')
-            return redirect(url_for('marketplace'))
-
-        item_type = purchase['item_type']
-        item_id = int(purchase['item_id'])
-        vendor_id = int(purchase['vendor_id'])
-        item_title = purchase['item_title']
-        total_amount = Decimal(str(purchase['amount'] or '0.00')).quantize(Decimal('0.01'))
-        vendor_earnings = Decimal(
-            str(purchase['vendor_earnings'] or '0.00')
-        ).quantize(Decimal('0.01'))
-        platform_fee = Decimal(
-            str(purchase['platform_fee'] or '0.00')
-        ).quantize(Decimal('0.01'))
-
-        # Load the customer's current account details.
-        cursor.execute("""
-            SELECT email, full_name
-            FROM users
-            WHERE id = %s
-            LIMIT 1
-        """, (user_id,))
-        customer = cursor.fetchone() or {}
-
-        email_to_send = str(
-            customer.get('email') or session.get('user_email') or ''
-        ).strip()
-        name_to_send = str(
-            customer.get('full_name') or session.get('user_name') or 'Customer'
-        ).strip()
-
-        # Extra protection against a payment being completed for an item that
-        # was subsequently deactivated/removed.
-        if item_type == 'course':
-            cursor.execute("""
-                SELECT id, title, price, vendor_id
-                FROM courses
-                WHERE id = %s
-                LIMIT 1
-            """, (item_id,))
-        elif item_type == 'product':
-            cursor.execute("""
-                SELECT id, title, price, vendor_id
-                FROM products
-                WHERE id = %s
-                LIMIT 1
-            """, (item_id,))
-        else:
-            conn.rollback()
-            flash('Invalid purchase type.', 'error')
-            return redirect(url_for('marketplace'))
-
-        item = cursor.fetchone()
-        if not item:
-            conn.rollback()
-            flash('The purchased item is no longer available. Please contact support.', 'error')
-            return redirect(url_for('marketplace'))
-
-        if int(item['vendor_id']) != vendor_id:
-            conn.rollback()
-            flash('Purchase vendor verification failed. Please contact support.', 'error')
-            return redirect(url_for('marketplace'))
-
-        # Re-check ownership immediately before creating the order.
-        if item_type == 'course':
-            cursor.execute("""
-                SELECT id
-                FROM enrollments
-                WHERE course_id = %s AND student_id = %s
-                LIMIT 1
-            """, (item_id, user_id))
-        else:
-            cursor.execute("""
-                SELECT id
-                FROM orders
-                WHERE product_id = %s
-                  AND customer_id = %s
-                  AND status = 'completed'
-                  AND payment_status = 'paid'
-                LIMIT 1
-            """, (item_id, user_id))
-
-        existing_ownership = cursor.fetchone()
-
-        # If ownership already exists, the payment record can safely be marked
-        # completed without creating a duplicate order/enrollment.
-        if existing_ownership:
-            cursor.execute("""
-                UPDATE purchases
-                SET payment_status = 'completed',
-                    payment_method = 'Paystack'
-                WHERE id = %s
-                  AND user_id = %s
-                  AND payment_status <> 'completed'
-            """, (purchase['id'], user_id))
-            conn.commit()
-            return redirect(url_for(
-                'payment_success',
-                item_type=item_type,
-                item_id=item_id
-            ))
-
-        # Defensive duplicate check using the Paystack reference.
-        cursor.execute("""
-            SELECT id
-            FROM orders
-            WHERE transaction_id = %s
-            LIMIT 1
-        """, (reference,))
-        existing_order = cursor.fetchone()
-
-        if existing_order:
-            cursor.execute("""
-                UPDATE purchases
-                SET payment_status = 'completed',
-                    payment_method = 'Paystack'
-                WHERE id = %s
-                  AND user_id = %s
-            """, (purchase['id'], user_id))
-            conn.commit()
-            return redirect(url_for(
-                'payment_success',
-                item_type=item_type,
-                item_id=item_id
-            ))
-
-        # Create the order.
-        order_number = f"ORD-{secrets.token_hex(8).upper()}"
-
-        cursor.execute("""
-            INSERT INTO orders (
-                order_number,
-                customer_id,
-                vendor_id,
-                product_id,
-                course_id,
-                product_title,
-                quantity,
-                price,
-                total_amount,
-                vendor_earnings,
-                platform_fee,
-                status,
-                payment_status,
-                payment_method,
-                transaction_id,
-                customer_name,
-                customer_email
-            )
-            VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, 'completed', 'paid', 'Paystack', %s, %s, %s
-            )
-        """, (
-            order_number,
-            user_id,
-            vendor_id,
-            item_id if item_type == 'product' else None,
-            item_id if item_type == 'course' else None,
-            item_title,
-            1,
-            total_amount,
-            total_amount,
-            vendor_earnings,
-            platform_fee,
-            reference,
-            name_to_send,
-            email_to_send
-        ))
-
-        order_id = cursor.lastrowid
-
-        # Credit the vendor on the SAME database transaction as the order.
-        # This preserves the transactions.order_id foreign key.
-        credit_vendor_wallet_with_conn(
-            conn=conn,
-            vendor_id=vendor_id,
-            amount=vendor_earnings,
-            order_id=order_id,
-            description=f"Sale of {item_title} (Order #{order_id})"
-        )
-
-        # Recalculate wallet totals using the same transaction.
-        sync_vendor_wallet_with_conn(conn, vendor_id)
-
-        # Paid courses are enrolled exactly once.
-        if item_type == 'course':
-            cursor.execute("""
-                INSERT INTO enrollments (
-                    course_id,
-                    student_id,
-                    progress,
-                    total_lessons
-                )
-                VALUES (
-                    %s,
-                    %s,
-                    0,
-                    (SELECT total_lessons FROM courses WHERE id = %s)
-                )
-            """, (item_id, user_id, item_id))
-
-            cursor.execute("""
-                UPDATE courses
-                SET enrolled_students = COALESCE(enrolled_students, 0) + 1
-                WHERE id = %s
-            """, (item_id,))
-
-        # Mark the original payment record complete only after every dependent
-        # record has been created successfully.
-        cursor.execute("""
-            UPDATE purchases
-            SET payment_status = 'completed',
-                payment_method = 'Paystack'
-            WHERE id = %s
-              AND user_id = %s
-        """, (purchase['id'], user_id))
-
-        if cursor.rowcount != 1:
-            raise RuntimeError('Purchase completion update failed.')
-
-        # Activity logging is kept inside the same transaction when possible.
-        # This avoids a second database connection while an order is pending.
-        try:
-            cursor.execute("""
-                INSERT INTO activity_log (
-                    user_id,
-                    action,
-                    description,
-                    metadata
-                )
-                VALUES (%s, %s, %s, %s)
-            """, (
-                user_id,
-                'purchased',
-                f'Purchased {item_type}: {item_title}',
-                json.dumps({
-                    'purchase_id': int(purchase['id']),
-                    'order_id': int(order_id),
-                    'reference': reference,
-                    'amount': _money(total_amount),
-                })
-            ))
-        except Exception:
-            # Activity logging must never turn a valid paid transaction into
-            # a failed purchase if an older database schema is missing a field.
-            app.logger.exception(
-                'purchase_activity_log_failed reference=%s order_id=%s',
-                reference, order_id
-            )
-
-        conn.commit()
-
-    except pymysql.err.IntegrityError as exc:
-        if conn:
-            conn.rollback()
-        app.logger.exception(
-            'purchase_completion_integrity_error reference=%s user_id=%s',
-            reference, user_id
-        )
-
-        # A UNIQUE constraint can mean another request completed the purchase
-        # at exactly the same time. Re-check before showing an error.
-        try:
-            check_conn = get_db_connection(timeout=10)
-            check_cursor = check_conn.cursor()
-            check_cursor.execute("""
-                SELECT payment_status, item_type, item_id
-                FROM purchases
-                WHERE transaction_id = %s AND user_id = %s
-                LIMIT 1
-            """, (reference, user_id))
-            completed = check_cursor.fetchone()
-            check_cursor.close()
-            check_conn.close()
-
-            if completed and completed['payment_status'] == 'completed':
-                return redirect(url_for(
-                    'payment_success',
-                    item_type=completed['item_type'],
-                    item_id=completed['item_id']
-                ))
-        except Exception:
-            pass
-
-        flash(
-            'The payment was received but the order could not be completed automatically. '
-            'Please contact support with your payment reference.',
-            'error'
-        )
-        return redirect(url_for('marketplace'))
-
-    except Exception as exc:
-        if conn:
-            conn.rollback()
-        app.logger.exception(
-            'single_checkout_completion_failed reference=%s user_id=%s error=%s',
-            reference, user_id, exc
-        )
-        flash(
-            'Payment verification could not be completed. '
-            'If you were charged, please contact support with your payment reference.',
-            'error'
-        )
-        return redirect(url_for('marketplace'))
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-    # Email is deliberately sent AFTER commit. An SMTP failure must not roll
-    # back an already successful payment.
-    if (
-        email_to_send
-        and is_valid_email(email_to_send)
-        and purchase
-    ):
-        try:
-            send_purchase_confirmation(
-                email_to_send,
-                name_to_send or 'Customer',
-                purchase['item_title'],
-                purchase['item_type'],
-                purchase['item_id']
-            )
-        except Exception:
-            app.logger.exception(
-                'purchase_confirmation_email_failed reference=%s',
-                reference
-            )
-
-    return redirect(url_for(
-        'payment_success',
-        item_type=purchase['item_type'],
-        item_id=purchase['item_id']
-    ))
+        if cursor: cursor.close()
+        if conn: conn.close()
 
 
 @app.route('/api/checkout/cart/initiate', methods=['POST'])
@@ -8874,7 +8251,10 @@ def api_initiate_cart_checkout():
         if not PAYSTACK_SECRET_KEY:
             return jsonify({'success': False, 'message': 'Payment system not configured.'}), 500
 
-        verify_ssl = os.environ.get('FLASK_ENV') == 'production'
+        # Certificate verification is always ON — this call initializes a
+        # real payment with a real amount, so it must never go out
+        # unverified.
+        verify_ssl = True
 
         url = "https://api.paystack.co/transaction/initialize"
         headers = {
@@ -8930,131 +8310,250 @@ def api_initiate_cart_checkout():
         if conn: conn.close()
 
 
+@app.route('/checkout/verify')
+@login_required
+def verify_payment():
+    """Verify Paystack payment and complete single-item purchase"""
+    reference = request.args.get('reference')
+    if not reference:
+        flash('Missing payment reference.', 'error')
+        return redirect(url_for('marketplace'))
+
+    user_id = session.get('user_id')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Get the purchase record
+    cursor.execute("""
+        SELECT * FROM purchases 
+        WHERE transaction_id = %s AND user_id = %s
+    """, (reference, user_id))
+    purchase = cursor.fetchone()
+
+    if not purchase:
+        conn.close()
+        flash('Purchase record not found.', 'error')
+        return redirect(url_for('marketplace'))
+
+    if purchase['payment_status'] == 'completed':
+        conn.close()
+        return redirect(url_for('payment_success', item_type=purchase['item_type'], item_id=purchase['item_id']))
+
+    # Verify payment with Paystack
+    if not PAYSTACK_SECRET_KEY:
+        conn.close()
+        flash('Payment system not configured.', 'error')
+        return redirect(url_for('marketplace'))
+
+    try:
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        headers = {'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}'}
+        response = requests.get(url, headers=headers, verify=certifi.where())
+        result = response.json()
+
+        if result.get('status') and result['data']['status'] == 'success':
+            # Mark purchase as completed
+            cursor.execute("""
+                UPDATE purchases 
+                SET payment_status = 'completed', payment_method = 'Paystack'
+                WHERE id = %s
+            """, (purchase['id'],))
+
+            # --- Create order record ---
+            order_number = f"ORD-{secrets.token_hex(8).upper()}"
+            vendor_id = purchase['vendor_id']
+            item_type = purchase['item_type']
+            item_id = purchase['item_id']
+            item_title = purchase['item_title']
+            price = purchase['amount']
+            vendor_earnings = purchase['vendor_earnings'] or round(price * 0.70, 2)
+            platform_fee = purchase['platform_fee'] or round(price * 0.30, 2)
+
+            cursor.execute("""
+                INSERT INTO orders (
+                    order_number, customer_id, vendor_id,
+                    product_id, course_id, product_title,
+                    quantity, price, total_amount,
+                    vendor_earnings, platform_fee,
+                    status, payment_status, payment_method, transaction_id,
+                    customer_name, customer_email
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+
+            """, (
+                order_number,
+                user_id,
+                vendor_id,
+                item_id if item_type == 'product' else None,
+                item_id if item_type == 'course' else None,
+                item_title,
+                1,  # quantity
+                price,
+                price,
+                vendor_earnings,
+                platform_fee,
+                'Paystack',
+                reference,
+                session.get('user_name', 'Customer'),
+                session.get('user_email', '')
+            ))
+
+            order_id = cursor.lastrowid
+
+            # --- Credit vendor wallet (70% earnings) ---
+            # IMPORTANT: use the *_with_conn variant on the SAME connection/
+            # transaction as the order insert above. The order row hasn't
+            # been committed yet, so crediting on a separate connection would
+            # trip the transactions.order_id foreign key and abort the whole
+            # purchase (this was the cause of successful Paystack payments
+            # bouncing the user back to the marketplace instead of completing).
+            credit_vendor_wallet_with_conn(
+                conn,
+                vendor_id=vendor_id,
+                amount=vendor_earnings,
+                order_id=order_id,
+                description=f"Sale of {item_title} (Order #{order_id})"
+            )
+
+            # --- Sync wallet to ensure everything matches ---
+            sync_vendor_wallet_with_conn(conn, vendor_id)
+
+            # --- Handle course enrollment ---
+            if item_type == 'course':
+                cursor.execute("""
+                    INSERT INTO enrollments (course_id, student_id, progress, total_lessons)
+                    VALUES (%s, %s, 0, (SELECT total_lessons FROM courses WHERE id = %s))
+                """, (item_id, user_id, item_id))
+
+                cursor.execute("""
+                    UPDATE courses SET enrolled_students = enrolled_students + 1
+                    WHERE id = %s
+                """, (item_id,))
+
+            # Log activity
+            log_activity(user_id, 'purchased', f'Purchased {item_type}: {item_title}')
+
+            conn.commit()
+            conn.close()
+
+            # Send confirmation email
+            send_purchase_confirmation(
+                session.get('user_email'),
+                session.get('user_name', 'Customer'),
+                item_title,
+                item_type,
+                item_id
+            )
+
+            return redirect(url_for('payment_success', item_type=item_type, item_id=item_id))
+
+        else:
+            conn.close()
+            flash('Payment verification failed. Please contact support.', 'error')
+            return redirect(url_for('marketplace'))
+
+    except Exception as e:
+        conn.close()
+        print(f"Payment verification error: {e}")
+        flash('Payment verification error. Please contact support.', 'error')
+        return redirect(url_for('marketplace'))
+
+
+@app.route('/payment/success')
+@login_required
 def payment_success():
-    """Render the payment-success page for single-item or cart purchases."""
     item_type = request.args.get('item_type')
     item_id = request.args.get('item_id')
     purchase_id = request.args.get('purchase_id')
 
-    user_id = _api_user_id()
-    if user_id is None:
-        return redirect(url_for('login'))
+    user_id = session.get('user_id')
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    conn = cursor = None
-
-    try:
-        conn = get_db_connection(timeout=20)
-        cursor = conn.cursor()
-
-        if item_type == 'cart' and purchase_id:
-            try:
-                purchase_id_int = int(purchase_id)
-            except (TypeError, ValueError):
-                flash('Invalid purchase.', 'error')
-                return redirect(url_for('marketplace'))
-
-            cursor.execute("""
-                SELECT *
-                FROM purchases
-                WHERE id = %s
-                  AND user_id = %s
-                  AND payment_status = 'completed'
-                LIMIT 1
-            """, (purchase_id_int, user_id))
-            purchase = cursor.fetchone()
-
-            if not purchase:
-                flash('Purchase not found.', 'error')
-                return redirect(url_for('marketplace'))
-
-            try:
-                metadata = json.loads(purchase['metadata']) if purchase['metadata'] else []
-            except (TypeError, ValueError, json.JSONDecodeError):
-                metadata = []
-
-            return render_template(
-                'checkout/payment-success.html',
-                item_type='cart',
-                cart_items=metadata,
-                purchase=purchase,
-                user_name=session.get('user_name', 'Customer')
-            )
-
-        if item_type not in ('course', 'product'):
-            flash('Invalid purchase type.', 'error')
-            return redirect(url_for('marketplace'))
-
-        try:
-            item_id_int = int(item_id)
-        except (TypeError, ValueError):
-            flash('Invalid item.', 'error')
-            return redirect(url_for('marketplace'))
-
+    if item_type == 'cart' and purchase_id:
         cursor.execute("""
-            SELECT *
-            FROM purchases
-            WHERE user_id = %s
-              AND item_type = %s
-              AND item_id = %s
-              AND payment_status = 'completed'
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-        """, (user_id, item_type, item_id_int))
+            SELECT * FROM purchases
+            WHERE id = %s AND user_id = %s
+        """, (purchase_id, user_id))
         purchase = cursor.fetchone()
-
-        if item_type == 'course':
-            cursor.execute("""
-                SELECT
-                    c.id,
-                    c.title,
-                    c.price,
-                    v.business_name AS vendor_name
-                FROM courses c
-                LEFT JOIN vendor_profiles v ON c.vendor_id = v.user_id
-                WHERE c.id = %s
-                LIMIT 1
-            """, (item_id_int,))
-        else:
-            cursor.execute("""
-                SELECT
-                    p.id,
-                    p.title,
-                    p.price,
-                    p.file_url,
-                    v.business_name AS vendor_name
-                FROM products p
-                LEFT JOIN vendor_profiles v ON p.vendor_id = v.user_id
-                WHERE p.id = %s
-                LIMIT 1
-            """, (item_id_int,))
-
-        item = cursor.fetchone()
-
-        if not item:
-            flash('Item not found.', 'error')
+        if not purchase:
+            conn.close()
+            flash('Purchase not found.', 'error')
             return redirect(url_for('marketplace'))
-
+        try:
+            cart_items = json.loads(purchase['metadata']) if purchase['metadata'] else []
+        except:
+            cart_items = []
+        conn.close()
         return render_template(
             'checkout/payment-success.html',
-            item=dict(item),
+            item_type='cart',
+            cart_items=cart_items,
+            purchase=purchase,
+            user_name=session.get('user_name', 'Customer')
+        )
+    else:
+        # Single item – fetch purchase record
+        cursor.execute("""
+            SELECT * FROM purchases
+            WHERE user_id = %s AND item_type = %s AND item_id = %s AND payment_status = 'completed'
+            ORDER BY created_at DESC LIMIT 1
+        """, (user_id, item_type, item_id))
+        purchase = cursor.fetchone()
+
+        if not purchase:
+            # fallback to item data if purchase not found
+            if item_type == 'course':
+                cursor.execute("""
+                    SELECT c.id, c.title, c.price, v.business_name as vendor_name
+                    FROM courses c
+                    JOIN vendor_profiles v ON c.vendor_id = v.user_id
+                    WHERE c.id = %s
+                """, (item_id,))
+            else:
+                cursor.execute("""
+                    SELECT p.id, p.title, p.price, p.file_url, v.business_name as vendor_name
+                    FROM products p
+                    JOIN vendor_profiles v ON p.vendor_id = v.user_id
+                    WHERE p.id = %s
+                """, (item_id,))
+            item = cursor.fetchone()
+            conn.close()
+            if not item:
+                flash('Item not found.', 'error')
+                return redirect(url_for('marketplace'))
+            return render_template(
+                'checkout/payment-success.html',
+                item=dict(item),
+                item_type=item_type,
+                purchase=None,
+                user_name=session.get('user_name', 'Customer')
+            )
+        conn.close()
+        # fetch item details
+        if item_type == 'course':
+            cursor.execute("""
+                SELECT c.id, c.title, c.price, v.business_name as vendor_name
+                FROM courses c
+                JOIN vendor_profiles v ON c.vendor_id = v.user_id
+                WHERE c.id = %s
+            """, (item_id,))
+        else:
+            cursor.execute("""
+                SELECT p.id, p.title, p.price, p.file_url, v.business_name as vendor_name
+                FROM products p
+                JOIN vendor_profiles v ON p.vendor_id = v.user_id
+                WHERE p.id = %s
+            """, (item_id,))
+        item = cursor.fetchone()
+        conn.close()
+        return render_template(
+            'checkout/payment-success.html',
+            item=dict(item) if item else None,
             item_type=item_type,
             purchase=purchase,
             user_name=session.get('user_name', 'Customer')
         )
-
-    except Exception as exc:
-        app.logger.exception(
-            'payment_success_error user_id=%s item_type=%s item_id=%s error=%s',
-            user_id, item_type, item_id, exc
-        )
-        flash('Unable to load the payment confirmation page.', 'error')
-        return redirect(url_for('marketplace'))
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 
 @app.route('/purchase/<int:purchase_id>')
