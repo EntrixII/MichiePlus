@@ -2664,6 +2664,9 @@ def remove_cart_item(cart_id):
         if conn: conn.close()
 
 
+
+
+
 @app.route('/api/cart/clear', methods=['DELETE'])
 def clear_cart():
     endpoint = request.path
@@ -2685,6 +2688,11 @@ def clear_cart():
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
+
+
+
+
 
 
 # Backward-compatible aliases for existing checkout-adjacent pages.
