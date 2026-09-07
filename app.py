@@ -4,6 +4,7 @@ from flask_session import Session
 import traceback
 from flask import make_response
 import hashlib
+import hmac
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import requests  # Add this to imports at the top
@@ -1524,6 +1525,295 @@ def sync_vendor_wallet_with_conn(conn, user_id):
     return balance, total_earned, total_withdrawn, pending
 
 
+def _complete_purchase_by_reference(reference):
+    """
+    Idempotent, session-independent purchase completion.
+
+    /checkout/verify and /checkout/cart/verify only ever run if the
+    customer's browser makes it back from Paystack. If Paystack has already
+    captured the money but the browser never returns (closed tab, dropped
+    connection, killed mobile app, etc.), nothing was ever recorded and the
+    vendor's wallet was never credited -- even though the customer really
+    paid. This function is the fix: it looks a purchase up purely by its
+    Paystack reference (no session/user_id needed), verifies the charge with
+    Paystack itself, and performs the same order-creation + wallet-crediting
+    steps the verify routes do. It's called from the /webhook/paystack route
+    below, which Paystack calls directly, independent of the customer's
+    browser.
+
+    Safe to call more than once for the same reference (e.g. once from the
+    webhook and once from the browser's verify route) -- if the purchase is
+    already 'completed' it returns immediately without crediting anything a
+    second time.
+
+    Returns True if the purchase is (now) completed, False if it could not
+    be completed (not found, not paid, Paystack not configured, etc).
+    """
+    conn = get_db_connection(timeout=20)
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM purchases WHERE transaction_id = %s", (reference,))
+        purchase = cursor.fetchone()
+
+        if not purchase:
+            return False
+
+        if purchase['payment_status'] == 'completed':
+            return True  # already processed by the browser flow (or a prior webhook call)
+
+        if not PAYSTACK_SECRET_KEY:
+            return False
+
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        headers = {'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}'}
+        response = _paystack_request_with_retry('GET', url, headers=headers, timeout=15)
+        result = response.json()
+
+        if not (result.get('status') and result.get('data', {}).get('status') == 'success'):
+            return False
+
+        user_id = purchase['user_id']
+
+        cursor.execute("SELECT full_name, email FROM users WHERE id = %s", (user_id,))
+        user_row = cursor.fetchone() or {}
+        customer_name = user_row.get('full_name', 'Customer')
+        customer_email = user_row.get('email', '')
+
+        vendor_ids = set()
+
+        if purchase['item_type'] == 'cart':
+            cart_items = json.loads(purchase['metadata']) if purchase['metadata'] else []
+
+            for item in cart_items:
+                order_number = f"ORD-{secrets.token_hex(8).upper()}"
+
+                if item['item_type'] == 'product':
+                    cursor.execute("""
+                        INSERT INTO orders (
+                            order_number, customer_id, vendor_id, product_id,
+                            product_title, quantity, price, total_amount,
+                            vendor_earnings, platform_fee, status, payment_status,
+                            payment_method, transaction_id, customer_name, customer_email
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+                    """, (
+                        order_number, user_id, item['vendor_id'], item['item_id'],
+                        item['title'], item['quantity'], item['price'],
+                        item['price'] * item['quantity'],
+                        round(item['price'] * 0.70, 2), round(item['price'] * 0.30, 2),
+                        'Paystack', reference, customer_name, customer_email
+                    ))
+                    order_id = cursor.lastrowid
+                    vendor_ids.add(item['vendor_id'])
+
+                    credit_vendor_wallet_with_conn(
+                        conn=conn,
+                        vendor_id=item['vendor_id'],
+                        amount=round(item['price'] * 0.70, 2),
+                        order_id=order_id,
+                        description=f"Sale of {item['title']} (Order #{order_id})"
+                    )
+
+                    if not item.get('is_digital', True):
+                        cursor.execute("""
+                            UPDATE products
+                            SET stock_quantity = COALESCE(stock_quantity, 0) - %s
+                            WHERE id = %s
+                        """, (item['quantity'], item['item_id']))
+
+                elif item['item_type'] == 'course':
+                    cursor.execute("""
+                        INSERT INTO orders (
+                            order_number, customer_id, vendor_id, course_id,
+                            product_title, quantity, price, total_amount,
+                            vendor_earnings, platform_fee, status, payment_status,
+                            payment_method, transaction_id, customer_name, customer_email
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+                    """, (
+                        order_number, user_id, item['vendor_id'], item['item_id'],
+                        item['title'], 1, item['price'], item['price'],
+                        round(item['price'] * 0.70, 2), round(item['price'] * 0.30, 2),
+                        'Paystack', reference, customer_name, customer_email
+                    ))
+                    order_id = cursor.lastrowid
+                    vendor_ids.add(item['vendor_id'])
+
+                    credit_vendor_wallet_with_conn(
+                        conn=conn,
+                        vendor_id=item['vendor_id'],
+                        amount=round(item['price'] * 0.70, 2),
+                        order_id=order_id,
+                        description=f"Sale of course {item['title']} (Order #{order_id})"
+                    )
+
+                    cursor.execute("""
+                        INSERT INTO enrollments (course_id, student_id, progress, total_lessons)
+                        VALUES (%s, %s, 0, (SELECT total_lessons FROM courses WHERE id = %s))
+                    """, (item['item_id'], user_id, item['item_id']))
+
+                    cursor.execute("""
+                        UPDATE courses SET enrolled_students = enrolled_students + 1
+                        WHERE id = %s
+                    """, (item['item_id'],))
+
+            for vid in vendor_ids:
+                sync_vendor_wallet_with_conn(conn, vid)
+
+            cursor.execute("""
+                UPDATE purchases SET payment_status = 'completed', payment_method = 'Paystack'
+                WHERE id = %s
+            """, (purchase['id'],))
+            cursor.execute("DELETE FROM cart WHERE user_id = %s", (user_id,))
+
+        else:
+            order_number = f"ORD-{secrets.token_hex(8).upper()}"
+            vendor_id = purchase['vendor_id']
+            item_type = purchase['item_type']
+            item_id = purchase['item_id']
+            item_title = purchase['item_title']
+            price = purchase['amount']
+            vendor_earnings = purchase['vendor_earnings'] or round(price * 0.70, 2)
+            platform_fee = purchase['platform_fee'] or round(price * 0.30, 2)
+
+            cursor.execute("""
+                UPDATE purchases SET payment_status = 'completed', payment_method = 'Paystack'
+                WHERE id = %s
+            """, (purchase['id'],))
+
+            cursor.execute("""
+                INSERT INTO orders (
+                    order_number, customer_id, vendor_id,
+                    product_id, course_id, product_title,
+                    quantity, price, total_amount,
+                    vendor_earnings, platform_fee,
+                    status, payment_status, payment_method, transaction_id,
+                    customer_name, customer_email
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'completed', 'paid', %s, %s, %s, %s)
+            """, (
+                order_number,
+                user_id,
+                vendor_id,
+                item_id if item_type == 'product' else None,
+                item_id if item_type == 'course' else None,
+                item_title,
+                1,
+                price,
+                price,
+                vendor_earnings,
+                platform_fee,
+                'Paystack',
+                reference,
+                customer_name,
+                customer_email
+            ))
+            order_id = cursor.lastrowid
+            vendor_ids.add(vendor_id)
+
+            credit_vendor_wallet_with_conn(
+                conn,
+                vendor_id=vendor_id,
+                amount=vendor_earnings,
+                order_id=order_id,
+                description=f"Sale of {item_title} (Order #{order_id})"
+            )
+            sync_vendor_wallet_with_conn(conn, vendor_id)
+
+            if item_type == 'course':
+                cursor.execute("""
+                    INSERT INTO enrollments (course_id, student_id, progress, total_lessons)
+                    VALUES (%s, %s, 0, (SELECT total_lessons FROM courses WHERE id = %s))
+                """, (item_id, user_id, item_id))
+
+                cursor.execute("""
+                    UPDATE courses SET enrolled_students = enrolled_students + 1
+                    WHERE id = %s
+                """, (item_id,))
+
+        log_activity(user_id, 'purchased', f"Purchased {purchase['item_type']}: {purchase['item_title']}")
+        conn.commit()
+
+        try:
+            send_purchase_confirmation(
+                customer_email,
+                customer_name,
+                purchase['item_title'],
+                purchase['item_type'],
+                purchase['item_id']
+            )
+        except Exception as email_exc:
+            print(f" Purchase confirmation email failed for {reference}: {email_exc}")
+
+        return True
+
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.route('/webhook/paystack', methods=['POST'])
+def paystack_webhook():
+    """
+    Server-to-server Paystack webhook -- the reconciliation safety net.
+
+    /checkout/verify and /checkout/cart/verify only run when the customer's
+    browser is redirected back from Paystack. Paystack calls THIS endpoint
+    directly the moment a charge succeeds, regardless of what the customer's
+    browser does afterwards, so a payment can never be "lost" between
+    Paystack taking the money and MichiePlus recording the order/crediting
+    the vendor.
+
+    The request is authenticated using the x-paystack-signature header (an
+    HMAC-SHA512 of the raw request body, keyed with the Paystack secret key)
+    -- this must be verified BEFORE trusting anything in the payload, since
+    this endpoint has no login/session of its own.
+    """
+    raw_body = request.get_data()
+    signature = request.headers.get('x-paystack-signature', '')
+
+    if not PAYSTACK_SECRET_KEY:
+        # Nothing we can verify against; acknowledge so Paystack doesn't retry forever.
+        return jsonify({'status': 'ignored', 'message': 'Paystack not configured'}), 200
+
+    expected_signature = hmac.new(
+        PAYSTACK_SECRET_KEY.encode('utf-8'),
+        raw_body,
+        hashlib.sha512
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_signature, signature):
+        print(" Paystack webhook: signature mismatch, ignoring request")
+        return jsonify({'status': 'invalid signature'}), 401
+
+    try:
+        event = json.loads(raw_body)
+    except (ValueError, TypeError):
+        return jsonify({'status': 'bad payload'}), 400
+
+    if event.get('event') != 'charge.success':
+        # Acknowledge every other event type so Paystack marks it delivered
+        # and doesn't keep retrying something we don't act on.
+        return jsonify({'status': 'ignored'}), 200
+
+    reference = event.get('data', {}).get('reference')
+    if not reference:
+        return jsonify({'status': 'ignored'}), 200
+
+    try:
+        _complete_purchase_by_reference(reference)
+    except Exception as exc:
+        # Log and still return 200: if this failed for a reason retrying
+        # won't fix, we don't want Paystack hammering the endpoint. The
+        # purchase stays 'pending' and can be reconciled manually.
+        print(f" Paystack webhook processing error for reference {reference}: {exc}")
+
+    return jsonify({'status': 'ok'}), 200
+
+
 def create_paystack_recipient(vendor_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1874,9 +2164,11 @@ def vendor_dashboard():
     unread_messages = cursor.fetchone()['count'] or 0
 
     # ===== WALLET BALANCE =====
-    cursor.execute("SELECT balance FROM wallet WHERE user_id = %s", (user_id,))
-    wallet_row = cursor.fetchone()
-    wallet_balance = wallet_row['balance'] if wallet_row else 0
+    # Recalculate from orders first, same as /vendor/wallet does. Without
+    # this, the dashboard could show a stale balance (e.g. 0) even though
+    # the vendor has completed sales, since it used to read the wallet row
+    # as-is instead of recomputing it.
+    wallet_balance, _wallet_total_earned, _wallet_total_withdrawn, _wallet_pending = sync_vendor_wallet(user_id)
 
     # ===== RECENT ORDERS =====
     cursor.execute("""
@@ -9090,6 +9382,24 @@ def api_enroll_course_paystack():
                 reference,
                 session.get('user_name', 'Customer')
             ))
+            order_id = cursor.lastrowid
+
+            # --- Credit vendor wallet (70% earnings) ---
+            # This route used to insert the order but never touch the
+            # wallet at all, so the vendor's earnings from a course sale
+            # made through this endpoint would never show up anywhere
+            # unless they happened to open /vendor/wallet (which
+            # recalculates from orders). Crediting here directly, on the
+            # same connection/transaction as the order insert, keeps this
+            # endpoint consistent with /checkout/verify.
+            credit_vendor_wallet_with_conn(
+                conn,
+                vendor_id=course['vendor_id'],
+                amount=round(course['price'] * 0.70, 2),
+                order_id=order_id,
+                description=f"Sale of course {course['title']} (Order #{order_id})"
+            )
+            sync_vendor_wallet_with_conn(conn, course['vendor_id'])
 
             # Log activity
             log_activity(user_id, 'purchased', f'Purchased course: {course["title"]}')
