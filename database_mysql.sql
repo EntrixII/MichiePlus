@@ -641,7 +641,7 @@ CREATE TABLE settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT IGNORE INTO settings (`key`, value) VALUES ('commission_rate', '30');
+INSERT IGNORE INTO settings (`key`, value) VALUES ('commission_rate', '10');
 INSERT IGNORE INTO settings (`key`, value) VALUES ('min_withdrawal', '5000');
 
 -- ============================================

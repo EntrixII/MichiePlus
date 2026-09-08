@@ -690,7 +690,7 @@
                 <div class="form-group">
                     <label>Price (₦) <span class="required">*</span></label>
                     <input type="number" name="price" id="priceInput" placeholder="0.00" step="0.01" min="0.01" required>
-                    <div class="helper-text">You will receive 70% of each sale. MichiePlus retains 30%.</div>
+                    <div class="helper-text">You will receive 90% of each sale. MichiePlus retains 10%.</div>
 
                     <!-- Price Calculator -->
                     <div class="price-calculator" id="priceCalculator">
@@ -699,12 +699,12 @@
                             <span class="value">₦<span id="displayPrice">0.00</span></span>
                         </div>
                         <div class="calc-row">
-                            <span class="label">MichiePlus Fee (30%)</span>
+                            <span class="label">MichiePlus Fee (10%)</span>
                             <span class="value MichiePlus-fee">-₦<span id="MichiePlusFee">0.00</span></span>
                         </div>
                         <hr class="calc-divider">
                         <div class="calc-total">
-                            <span>Your Profit (70%)</span>
+                            <span>Your Profit (90%)</span>
                             <span class="your-profit">₦<span id="yourProfit">0.00</span></span>
                         </div>
                     </div>
@@ -832,8 +832,8 @@
             if (price > 0) {
                 priceCalculator.classList.add('visible');
 
-                const fee = price * 0.30;
-                const profit = price * 0.70;
+                const fee = price * 0.10;
+                const profit = price * 0.90;
 
                 displayPrice.textContent = price.toFixed(2);
                 MichiePlusFee.textContent = fee.toFixed(2);

@@ -1368,7 +1368,7 @@ def init_db():
             )
         ''')
         cursor.execute(
-            "INSERT INTO settings (`key`, value) VALUES ('commission_rate', '30') ON DUPLICATE KEY UPDATE `key` = `key`")
+            "INSERT INTO settings (`key`, value) VALUES ('commission_rate', '10') ON DUPLICATE KEY UPDATE `key` = `key`")
         cursor.execute(
             "INSERT INTO settings (`key`, value) VALUES ('min_withdrawal', '5000') ON DUPLICATE KEY UPDATE `key` = `key`")
         print("settings table created with defaults")

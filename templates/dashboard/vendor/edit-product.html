@@ -779,7 +779,7 @@
                            required>
 
                     <div class="helper-text">
-                        You will receive 70% of each sale. MichiePlus retains 30%.
+                        You will receive 90% of each sale. MichiePlus retains 10%.
                     </div>
 
                     <!-- Price Calculator -->
@@ -794,7 +794,7 @@
                         </div>
 
                         <div class="calc-row">
-                            <span class="label">MichiePlus Fee (30%)</span>
+                            <span class="label">MichiePlus Fee (10%)</span>
 
                             <span class="value MichiePlus-fee">
                                 -₦<span id="MichiePlusFee">0.00</span>
@@ -804,7 +804,7 @@
                         <hr class="calc-divider">
 
                         <div class="calc-total">
-                            <span>Your Profit (70%)</span>
+                            <span>Your Profit (90%)</span>
 
                             <span class="your-profit">
                                 ₦<span id="yourProfit">0.00</span>
@@ -1092,11 +1092,11 @@
 
                 priceCalculator.classList.add('visible');
 
-                // MichiePlus takes 30%
-                const fee = price * 0.30;
+                // MichiePlus takes 10%
+                const fee = price * 0.10;
 
-                // Vendor receives 70%
-                const profit = price * 0.70;
+                // Vendor receives 90%
+                const profit = price * 0.90;
 
                 displayPrice.textContent = price.toFixed(2);
                 MichiePlusFee.textContent = fee.toFixed(2);
