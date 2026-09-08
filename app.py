@@ -516,6 +516,23 @@ def send_vendor_notification(vendor_email, vendor_name, subject, message, action
         return False
 
 
+def insert_order_item(cursor, order_id, item_type, item_id, quantity, price):
+    """Create the line-item record used by vendor analytics and product sales."""
+    cursor.execute("""
+        INSERT INTO order_items (
+            order_id, product_id, course_id, quantity, price, total
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (
+        order_id,
+        item_id if item_type == 'product' else None,
+        item_id if item_type == 'course' else None,
+        quantity,
+        price,
+        price * quantity
+    ))
+
+
 def init_db():
     """Initialize database with tables if they don't exist"""
     conn = get_db_connection()
@@ -952,6 +969,40 @@ def init_db():
             )
         ''')
         print("order_items table created")
+
+    # Backfill line items for orders created by older versions of the app.
+    # Vendor analytics depends on order_items, while older checkout code only
+    # inserted into orders. This makes existing completed sales visible too.
+    cursor.execute("""
+        INSERT INTO order_items (order_id, product_id, course_id, quantity, price, total)
+        SELECT o.id, o.product_id, o.course_id, COALESCE(o.quantity, 1),
+               COALESCE(o.price, 0), COALESCE(o.total_amount, 0)
+        FROM orders o
+        LEFT JOIN order_items oi ON oi.order_id = o.id
+        WHERE oi.id IS NULL
+          AND (o.product_id IS NOT NULL OR o.course_id IS NOT NULL)
+    """)
+    print("order_items backfill checked")
+
+    # ============================================
+    # ORDER ITEMS HELPERS
+    # ============================================
+
+    def insert_order_item(cursor, order_id, item_type, item_id, quantity, price):
+        """Create the line-item record used by vendor analytics and product sales."""
+        cursor.execute("""
+            INSERT INTO order_items (
+                order_id, product_id, course_id, quantity, price, total
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            order_id,
+            item_id if item_type == 'product' else None,
+            item_id if item_type == 'course' else None,
+            quantity,
+            price,
+            price * quantity
+        ))
 
     # ============================================
     # CONVERSATIONS TABLE
@@ -1605,6 +1656,7 @@ def _complete_purchase_by_reference(reference):
                         'Paystack', reference, customer_name, customer_email
                     ))
                     order_id = cursor.lastrowid
+                    insert_order_item(cursor, order_id, 'product', item['item_id'], item['quantity'], item['price'])
                     vendor_ids.add(item['vendor_id'])
 
                     credit_vendor_wallet_with_conn(
@@ -1638,6 +1690,7 @@ def _complete_purchase_by_reference(reference):
                         'Paystack', reference, customer_name, customer_email
                     ))
                     order_id = cursor.lastrowid
+                    insert_order_item(cursor, order_id, 'course', item['item_id'], 1, item['price'])
                     vendor_ids.add(item['vendor_id'])
 
                     credit_vendor_wallet_with_conn(
@@ -1710,6 +1763,7 @@ def _complete_purchase_by_reference(reference):
                 customer_email
             ))
             order_id = cursor.lastrowid
+            insert_order_item(cursor, order_id, item_type, item_id, 1, price)
             vendor_ids.add(vendor_id)
 
             credit_vendor_wallet_with_conn(
@@ -1958,19 +2012,123 @@ def hash_token(token):
 # DECORATORS
 # ============================================
 def login_required(f):
-    """Decorator to require login for routes"""
+    """Require a real database account. Temporary signup sessions are only
+    allowed through the explicit onboarding routes."""
 
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Allow temp users during onboarding
-        if session.get('temp_user') and session.get('user_id') == 'temp_user':
-            return f(*args, **kwargs)
+        user_id = session.get('user_id')
+        if not user_id:
+            flash('Please log in to access this page.', 'warning')
+            return redirect(url_for('login'))
 
-        if 'user_id' not in session:
+        # Email signup users may move through onboarding, but they are not
+        # authenticated customers yet and cannot access normal protected pages.
+        onboarding_endpoints = {
+            'customer_step1', 'customer_step2', 'customer_step3',
+            'customer_step4', 'vendor_step1', 'vendor_step2',
+            'vendor_step3', 'vendor_step4', 'vendor_step5'
+        }
+        if user_id == 'temp_user':
+            if request.endpoint in onboarding_endpoints:
+                return f(*args, **kwargs)
+            flash('Please log in to access this page.', 'warning')
+            return redirect(url_for('login'))
+        try:
+            int(user_id)
+        except (TypeError, ValueError):
+            session.pop('user_id', None)
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
 
+    return decorated_function
+
+
+
+def _make_receipt_token(purchase_id, user_id, expires_minutes=15):
+    """Create a short-lived signed token used only for the post-payment receipt redirect."""
+    expires_at = int(time.time()) + (expires_minutes * 60)
+    payload = f"{int(purchase_id)}:{int(user_id)}:{expires_at}"
+    signature = hmac.new(
+        app.config['SECRET_KEY'].encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    return f"{payload}:{signature}"
+
+
+def _verify_receipt_token(token):
+    """Validate a short-lived post-payment receipt token."""
+    if not token:
+        return None
+
+    try:
+        purchase_id, user_id, expires_at, signature = token.split(':', 3)
+        purchase_id = int(purchase_id)
+        user_id = int(user_id)
+        expires_at = int(expires_at)
+
+        if expires_at < int(time.time()):
+            return None
+
+        payload = f"{purchase_id}:{user_id}:{expires_at}"
+        expected = hmac.new(
+            app.config['SECRET_KEY'].encode('utf-8'),
+            payload.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected):
+            return None
+
+        return purchase_id, user_id
+    except (TypeError, ValueError):
+        return None
+
+
+def customer_account_required(f):
+    """Require a completed, active customer account for purchases."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user_id = session.get('user_id')
+        if not user_id or user_id == 'temp_user':
+            # A registered account is NOT the same as a logged-in session.
+            # Checkout and payment must always require a current authenticated
+            # customer session. Preserve the destination so login can return
+            # the customer to the checkout flow.
+            session['post_auth_redirect'] = request.full_path.rstrip('?')
+            login_url = url_for('login')
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': 'LOGIN_REQUIRED',
+                                'message': 'Please log in before purchasing.',
+                                'redirect': login_url}), 401
+            flash('Please log in before purchasing.', 'warning')
+            return redirect(login_url)
+        try:
+            numeric_user_id = int(user_id)
+        except (TypeError, ValueError):
+            session.clear()
+            return redirect(url_for('signup'))
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""SELECT id, user_type, onboarding_completed, is_active
+                             FROM users WHERE id = %s""", (numeric_user_id,))
+            user = cursor.fetchone()
+        finally:
+            conn.close()
+
+        if not user or not user['is_active'] or user['user_type'] != 'customer' or user['onboarding_completed'] != 1:
+            session['post_auth_redirect'] = request.full_path.rstrip('?')
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': 'CUSTOMER_ACCOUNT_REQUIRED',
+                                'message': 'Please finish creating your customer account before purchasing.',
+                                'redirect': url_for('choose_role') if user else url_for('signup')}), 403
+            flash('Please finish creating your customer account before purchasing.', 'warning')
+            return redirect(url_for('choose_role') if user else url_for('signup'))
+        return f(*args, **kwargs)
     return decorated_function
 
 
@@ -2017,47 +2175,28 @@ def handle_oauth_user(email, full_name, provider, provider_id):
     user = cursor.fetchone()
 
     if not user:
-        # --- CREATE NEW USER ---
-        # Generate verification token and code
-        verification_token = generate_verification_token()
-        verification_code = generate_verification_code()
-        verification_expires = datetime.now() + timedelta(hours=24)
-
-        # Insert new user
-        cursor.execute('''
-            INSERT INTO users (
-                email, full_name, user_type, is_verified,
-                auth_provider, google_id,
-                verification_token, verification_expires,
-                verification_code, verification_code_expires,
-                onboarding_completed
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-
-        ''', (
-            email,
-            full_name,
-            None,  # role not chosen yet — must go through /choose-role, not default to 'customer'
-            1,  # OAuth users are verified by default
-            'google',
-            provider_id,
-            verification_token,
-            verification_expires,
-            verification_code,
-            verification_expires,
-            0  # onboarding not complete yet
-        ))
-
-        user_id = cursor.lastrowid
-        cursor.execute(
-            "SELECT id, email, full_name, user_type, is_verified, auth_provider, onboarding_completed "
-            "FROM users WHERE id = %s", (user_id,)
-        )
-        user = cursor.fetchone()
-        conn.commit()
-
+        # New OAuth users remain temporary until onboarding is complete.
+        conn.close()
+        session['temp_user'] = {
+            'full_name': full_name,
+            'email': email,
+            'password_hash': None,
+            'auth_provider': provider.lower(),
+            'google_id': provider_id if provider.lower() == 'google' else None,
+            'is_verified': 1,
+            'is_oauth': True,
+            'is_onboarding': True
+        }
+        session['onboarding_data'] = {
+            'step1': {}, 'step2': {}, 'step3': {}, 'step4': {}, 'step5': {}
+        }
+        session['user_id'] = 'temp_user'
+        session['user_email'] = email
+        session['user_name'] = full_name
+        session['auth_provider'] = provider.lower()
+        session['is_verified'] = 1
         flash(f'Welcome {full_name}! Please choose your role.', 'success')
-        redirect_url = url_for('choose_role')
+        return redirect(url_for('choose_role'))
 
     else:
         # --- EXISTING USER ---
@@ -2172,16 +2311,27 @@ def vendor_dashboard():
 
     # ===== RECENT ORDERS =====
     cursor.execute("""
-        SELECT 
-            id, 
-            id as order_number,  -- Use id as order_number
-            customer_name, 
-            total_amount as amount, 
-            status, 
-            created_at
-        FROM orders 
-        WHERE vendor_id = %s
-        ORDER BY created_at DESC
+        SELECT
+            o.id,
+            o.order_number,
+            o.customer_id,
+            COALESCE(o.customer_name, u.full_name, 'Customer') AS customer_name,
+            COALESCE(o.customer_email, u.email, '') AS customer_email,
+            o.product_title,
+            o.quantity,
+            o.total_amount AS amount,
+            o.status,
+            o.payment_status,
+            o.created_at,
+            CASE
+                WHEN o.product_title IS NOT NULL AND o.quantity > 1
+                    THEN CONCAT(o.product_title, ' x', o.quantity)
+                ELSE COALESCE(o.product_title, 'Item')
+            END AS items
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.customer_id
+        WHERE o.vendor_id = %s
+        ORDER BY o.created_at DESC
         LIMIT 5
     """, (user_id,))
     recent_orders = cursor.fetchall()
@@ -2772,6 +2922,71 @@ def _pricing_breakdown(cart_rows, shipping_cost=None):
     return {'subtotal': subtotal, 'vat': vat, 'shipping': shipping, 'total': total}
 
 
+def _guest_cart():
+    cart = session.get('guest_cart', [])
+    return cart if isinstance(cart, list) else []
+
+
+def _guest_cart_count():
+    return sum(int(item.get('quantity', 1)) for item in _guest_cart())
+
+
+def _guest_cart_rows(cursor):
+    rows = []
+    for guest_item in _guest_cart():
+        item_type = guest_item.get('item_type', 'product')
+        item_id = int(guest_item.get('item_id'))
+        quantity = max(1, int(guest_item.get('quantity', 1)))
+        if item_type == 'product':
+            cursor.execute('''
+                SELECT id AS item_id, title, price, cover_image, is_digital, vendor_id
+                FROM products WHERE id = %s AND is_active = 1 AND is_approved = 1
+            ''', (item_id,))
+        else:
+            cursor.execute('''
+                SELECT id AS item_id, title, price, cover_image, NULL AS is_digital, vendor_id
+                FROM courses WHERE id = %s AND is_active = 1 AND is_approved = 1
+            ''', (item_id,))
+        item = cursor.fetchone()
+        if item:
+            row = dict(item)
+            row.update({'cart_id': None, 'item_type': item_type, 'quantity': quantity})
+            rows.append(row)
+    return rows
+
+
+def merge_guest_cart_into_account(user_id):
+    guest_items = _guest_cart()
+    if not guest_items:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        for guest_item in guest_items:
+            item_type = guest_item.get('item_type', 'product')
+            item_id = int(guest_item.get('item_id'))
+            quantity = max(1, int(guest_item.get('quantity', 1)))
+            cursor.execute('''
+                SELECT id, quantity FROM cart
+                WHERE user_id = %s AND item_type = %s AND item_id = %s FOR UPDATE
+            ''', (user_id, item_type, item_id))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute('UPDATE cart SET quantity = quantity + %s, added_at = CURRENT_TIMESTAMP WHERE id = %s',
+                               (quantity, existing['id']))
+            else:
+                cursor.execute('''INSERT INTO cart (user_id, item_type, item_id, quantity)
+                                  VALUES (%s, %s, %s, %s)''',
+                               (user_id, item_type, item_id, quantity))
+        conn.commit()
+        session.pop('guest_cart', None)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 @app.route('/api/cart/add', methods=['POST'])
 def add_to_cart():
     endpoint = request.path
@@ -2780,14 +2995,30 @@ def add_to_cart():
     quantity = None
     conn = cursor = None
     try:
-        if user_id is None:
-            return _api_error('AUTH_REQUIRED', 'Please log in before adding items to your cart.', 401)
         data = _parse_json_object()
         item_type = data.get('item_type', 'product')
         if item_type not in ('product', 'course'):
             return _api_error('INVALID_ITEM_TYPE', 'item_type must be product or course.', 400)
         product_id = _positive_int(data.get('item_id', data.get('product_id')), 'item_id')
         quantity = _positive_int(data.get('quantity', 1), 'quantity')
+
+        if user_id is None:
+            guest_cart = _guest_cart()
+            existing = next((x for x in guest_cart
+                             if x.get('item_type', 'product') == item_type
+                             and int(x.get('item_id')) == product_id), None)
+            if existing:
+                existing['quantity'] = int(existing.get('quantity', 1)) + quantity
+                new_quantity = existing['quantity']
+            else:
+                guest_cart.append({'item_type': item_type, 'item_id': product_id, 'quantity': quantity})
+                new_quantity = quantity
+            session['guest_cart'] = guest_cart
+            return _api_success('Item added to cart.', {
+                'cart_id': None, 'item_type': item_type, 'item_id': product_id,
+                'quantity': new_quantity, 'cart_count': _guest_cart_count()
+            })
+
         conn = get_db_connection()
         cursor = conn.cursor()
         if item_type == 'product':
@@ -2844,7 +3075,25 @@ def get_cart():
     conn = cursor = None
     try:
         if user_id is None:
-            return _api_error('AUTH_REQUIRED', 'Please log in to view your cart.', 401)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            try:
+                rows = _guest_cart_rows(cursor)
+                items = []
+                for row in rows:
+                    price = row['price'] or Decimal('0.00')
+                    item = dict(row)
+                    item['price'] = _money(price)
+                    item['line_total'] = _money(price * int(row['quantity']))
+                    items.append(item)
+                pricing = _pricing_breakdown(rows)
+                return _api_success('Cart loaded.', {
+                    'items': items, 'count': sum(int(r['quantity']) for r in rows),
+                    'subtotal': _money(pricing['subtotal']), 'vat': _money(pricing['vat']),
+                    'total': _money(pricing['subtotal'] + pricing['vat'])
+                })
+            finally:
+                cursor.close(); conn.close()
         conn = get_db_connection()
         cursor = conn.cursor()
         rows = _cart_rows(cursor, user_id)
@@ -2865,8 +3114,16 @@ def get_cart():
         _log_api_exception(endpoint, user_id, None, None, exc)
         return _api_error('CART_LOAD_FAILED', 'Unable to load your cart.', 500, exc)
     finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @app.route('/api/cart/count', methods=['GET'])
@@ -2876,7 +3133,7 @@ def cart_count():
     conn = cursor = None
     try:
         if user_id is None:
-            return _api_error('AUTH_REQUIRED', 'Please log in to view your cart count.', 401)
+            return _api_success('Cart count loaded.', {'count': _guest_cart_count()})
         conn = get_db_connection()
         cursor = conn.cursor()
         return _api_success('Cart count loaded.', {'count': _cart_count(cursor, user_id)})
@@ -2895,7 +3152,17 @@ def update_cart(cart_id):
     conn = cursor = None
     try:
         if user_id is None:
-            return _api_error('AUTH_REQUIRED', 'Please log in to update your cart.', 401)
+            data = _parse_json_object()
+            quantity = _positive_int(data.get('quantity'), 'quantity')
+            guest_cart = _guest_cart()
+            item = next((x for x in guest_cart if x.get('item_type', 'product') == data.get('item_type', 'product')
+                         and int(x.get('item_id')) == int(data.get('item_id'))), None)
+            if not item:
+                return _api_error('CART_ITEM_NOT_FOUND', 'Cart item not found.', 404)
+            item['quantity'] = quantity
+            session['guest_cart'] = guest_cart
+            return _api_success('Cart quantity updated.', {'cart_id': None, 'quantity': quantity,
+                                                            'cart_count': _guest_cart_count()})
         data = _parse_json_object()
         quantity = _positive_int(data.get('quantity'), 'quantity')
         conn = get_db_connection()
@@ -2966,7 +3233,9 @@ def clear_cart():
     conn = cursor = None
     try:
         if user_id is None:
-            return _api_error('AUTH_REQUIRED', 'Please log in to clear your cart.', 401)
+            removed = len(_guest_cart())
+            session.pop('guest_cart', None)
+            return _api_success('Cart cleared.', {'removed_items': removed, 'cart_count': 0})
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('DELETE FROM cart WHERE user_id = %s', (user_id,))
@@ -3033,17 +3302,15 @@ def legacy_remove_cart():
 
 
 @app.route('/cart')
-@login_required
 def view_cart():
     return render_template('cart.html')
 
 
 
 @app.route('/checkout/cart')
-@login_required
+@customer_account_required
 def checkout_cart():
     user_id = session.get('user_id')
-
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -3131,7 +3398,7 @@ def checkout_cart():
 
 
 @app.route('/checkout/cart/verify')
-@login_required
+@customer_account_required
 def verify_cart_payment():
     reference = request.args.get('reference')
     if not reference:
@@ -3193,7 +3460,15 @@ def verify_cart_payment():
         # PyMySQL opens a transaction automatically with the first statement
         cursor = conn.cursor()  # re-use cursor after retry loop
 
-        cart_items = json.loads(purchase['metadata']) if purchase['metadata'] else []
+        metadata = json.loads(purchase['metadata']) if purchase['metadata'] else []
+        # Cart metadata is stored as an object containing the item snapshot.
+        # Older purchases may contain the list directly, so support both shapes.
+        if isinstance(metadata, dict):
+            cart_items = metadata.get('items', [])
+        else:
+            cart_items = metadata
+        if not isinstance(cart_items, list):
+            cart_items = []
         vendor_ids = set()
 
         for item in cart_items:
@@ -3228,6 +3503,7 @@ def verify_cart_payment():
                     customer_email
                 ))
                 order_id = cursor.lastrowid
+                insert_order_item(cursor, order_id, 'product', item['item_id'], item['quantity'], item['price'])
                 vendor_ids.add(item['vendor_id'])
 
                 credit_vendor_wallet_with_conn(
@@ -3272,6 +3548,7 @@ def verify_cart_payment():
                     customer_email
                 ))
                 order_id = cursor.lastrowid
+                insert_order_item(cursor, order_id, 'course', item['item_id'], 1, item['price'])
                 vendor_ids.add(item['vendor_id'])
 
                 credit_vendor_wallet_with_conn(
@@ -3305,7 +3582,7 @@ def verify_cart_payment():
 
         conn.commit()
         flash('Payment successful! Your order is complete.', 'success')
-        return redirect(url_for('payment_success', item_type='cart', purchase_id=purchase['id']))
+        return redirect(url_for('payment_success', item_type='cart', purchase_id=purchase['id'], receipt_token=_make_receipt_token(purchase['id'], user_id)))
 
     except Exception as e:
         if conn:
@@ -5411,6 +5688,16 @@ def login():
         else:
             redirect_url = url_for('customer_dashboard')
 
+        post_auth_redirect = session.get('post_auth_redirect')
+        if user['user_type'] == 'customer' and user['onboarding_completed'] == 1 and user['is_active']:
+            try:
+                merge_guest_cart_into_account(user['id'])
+            except Exception as merge_error:
+                print('Guest cart merge failed after login:', merge_error)
+            if post_auth_redirect:
+                session.pop('post_auth_redirect', None)
+                redirect_url = post_auth_redirect
+
         return jsonify({
             'success': True,
             'message': 'Login successful',
@@ -5674,10 +5961,14 @@ def choose_role():
 
                         session['user_type'] = 'customer'
                         session.pop('is_new_oauth_user', None)
-
+                        try:
+                            merge_guest_cart_into_account(user_id)
+                        except Exception as merge_error:
+                            print('Guest cart merge failed after OAuth signup:', merge_error)
+                        post_auth_redirect = session.pop('post_auth_redirect', None)
                         return jsonify({
                             'success': True,
-                            'redirect': url_for('customer_dashboard')
+                            'redirect': post_auth_redirect or url_for('customer_dashboard')
                         })
 
                     # =================================================
@@ -7256,23 +7547,27 @@ def customer_step5():
                     timezone,
                     verification_code,
                     verification_code_expires,
-                    onboarding_completed
+                    onboarding_completed,
+                    auth_provider,
+                    google_id
                 )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 
             """, (
                 temp_user['email'],
-                temp_user['password_hash'],
+                temp_user.get('password_hash'),
                 temp_user['full_name'],
                 temp_user.get('user_type', 'customer'),
-                0,
+                1 if temp_user.get('is_oauth') else 0,
                 verification_token,
                 verification_expires,
                 step1.get('phone', ''),
                 step4.get('timezone', 'Africa/Lagos'),
                 verification_code,
                 verification_expires,
-                1
+                1,
+                temp_user.get('auth_provider', 'email'),
+                temp_user.get('google_id')
             ))
 
             user_id = cursor.lastrowid
@@ -7300,6 +7595,12 @@ def customer_step5():
 
             conn.commit()
 
+            try:
+                merge_guest_cart_into_account(user_id)
+            except Exception as merge_error:
+                print('Guest cart merge failed after signup:', merge_error)
+
+            post_auth_redirect = session.get('post_auth_redirect')
             session['verify_email'] = temp_user['email']
 
             # Email errors should NOT break signup
@@ -7319,11 +7620,14 @@ def customer_step5():
             session.pop('onboarding_step', None)
             session.pop('onboarding_complete', None)
             session.pop('user_id', None)
+            session.pop('post_auth_redirect', None)
 
             return jsonify({
                 'success': True,
-                'message': 'Onboarding complete! Please verify your email.',
-                'redirect': url_for('verify_email_page')
+                'message': ('Onboarding complete! Account created.' if temp_user.get('is_oauth')
+                            else 'Onboarding complete! Please verify your email.'),
+                'redirect': post_auth_redirect or (url_for('customer_dashboard') if temp_user.get('is_oauth')
+                                                   else url_for('verify_email_page'))
             })
 
         except pymysql.err.IntegrityError:
@@ -8105,7 +8409,7 @@ def vendor_step5():
 # ============================================
 
 @app.route('/api/course/enroll', methods=['POST'])
-@login_required
+@customer_account_required
 def api_enroll_course():
     """Enroll a user in a course"""
     user_id = session.get('user_id')
@@ -8185,7 +8489,7 @@ def api_enroll_course():
 # ============================================
 
 @app.route('/checkout/<item_type>/<int:item_id>')
-@login_required
+@customer_account_required
 def checkout(item_type, item_id):
     """Unified checkout page for courses and products"""
     user_id = session.get('user_id')
@@ -8269,7 +8573,7 @@ def checkout(item_type, item_id):
 
 
 @app.route('/api/checkout/initiate', methods=['POST'])
-@login_required
+@customer_account_required
 def api_initiate_checkout():
     """Initiate checkout - creates a pending purchase and returns Paystack URL"""
     user_id = session.get('user_id')
@@ -8424,7 +8728,7 @@ def api_initiate_checkout():
 
 
 @app.route('/api/checkout/cart/initiate', methods=['POST'])
-@login_required
+@customer_account_required
 def api_initiate_cart_checkout():
     user_id = session.get('user_id')
     conn = cursor = None
@@ -8611,7 +8915,7 @@ def api_initiate_cart_checkout():
 
 
 @app.route('/checkout/verify')
-@login_required
+@customer_account_required
 def verify_payment():
     """Verify Paystack payment and complete single-item purchase"""
     reference = request.args.get('reference')
@@ -8637,7 +8941,7 @@ def verify_payment():
 
     if purchase['payment_status'] == 'completed':
         conn.close()
-        return redirect(url_for('payment_success', item_type=purchase['item_type'], item_id=purchase['item_id']))
+        return redirect(url_for('payment_success', item_type=purchase['item_type'], item_id=purchase['item_id'], purchase_id=purchase['id'], receipt_token=_make_receipt_token(purchase['id'], user_id)))
 
     # Verify payment with Paystack
     if not PAYSTACK_SECRET_KEY:
@@ -8699,6 +9003,7 @@ def verify_payment():
             ))
 
             order_id = cursor.lastrowid
+            insert_order_item(cursor, order_id, item_type, item_id, 1, price)
 
             # --- Credit vendor wallet (70% earnings) ---
             # IMPORTANT: use the *_with_conn variant on the SAME connection/
@@ -8745,7 +9050,7 @@ def verify_payment():
                 item_id
             )
 
-            return redirect(url_for('payment_success', item_type=item_type, item_id=item_id))
+            return redirect(url_for('payment_success', item_type=item_type, item_id=item_id, purchase_id=purchase['id'], receipt_token=_make_receipt_token(purchase['id'], user_id)))
 
         else:
             conn.close()
@@ -8760,8 +9065,59 @@ def verify_payment():
 
 
 @app.route('/payment/success')
-@login_required
 def payment_success():
+    # Normally the customer's session is still present after Paystack redirects
+    # back to the site. If the browser/session was lost during the external
+    # Paystack redirect, accept only the short-lived signed receipt token that
+    # our own successful verification route generated.
+    receipt_token = request.args.get('receipt_token')
+    token_data = _verify_receipt_token(receipt_token)
+
+    if token_data:
+        token_purchase_id, token_user_id = token_data
+        requested_purchase_id = request.args.get('purchase_id')
+        if requested_purchase_id and str(requested_purchase_id) != str(token_purchase_id):
+            flash('Invalid receipt link.', 'error')
+            return redirect(url_for('login'))
+
+        # Confirm the purchase belongs to the signed-in user before restoring
+        # the session. The token itself is only generated after Paystack
+        # verification succeeds.
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id, user_type, onboarding_completed, is_active, full_name, email "
+                "FROM users WHERE id = %s",
+                (token_user_id,)
+            )
+            token_user = cursor.fetchone()
+        finally:
+            conn.close()
+
+        if not token_user or not token_user['is_active'] or token_user['user_type'] != 'customer' or token_user['onboarding_completed'] != 1:
+            flash('Please log in before purchasing.', 'warning')
+            return redirect(url_for('login'))
+
+        session['user_id'] = token_user['id']
+        session['user_name'] = token_user.get('full_name') or 'Customer'
+        session['user_email'] = token_user.get('email') or ''
+        session.permanent = True
+        # Prevent the receipt token from being reused as an auth redirect.
+        session.pop('post_auth_redirect', None)
+
+    # If there was no recovery token, a normal logged-in customer session is
+    # still required to view a receipt.
+    user_id = session.get('user_id')
+    if not user_id or user_id == 'temp_user':
+        flash('Please log in before purchasing.', 'warning')
+        return redirect(url_for('login'))
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        session.clear()
+        return redirect(url_for('login'))
+
     item_type = request.args.get('item_type')
     item_id = request.args.get('item_id')
     purchase_id = request.args.get('purchase_id')
@@ -8829,8 +9185,7 @@ def payment_success():
                 purchase=None,
                 user_name=session.get('user_name', 'Customer')
             )
-        conn.close()
-        # fetch item details
+        # fetch item details while the connection is still open
         if item_type == 'course':
             cursor.execute("""
                 SELECT c.id, c.title, c.price, v.business_name as vendor_name
@@ -8879,8 +9234,16 @@ def purchase_detail(purchase_id):
     # Handle cart purchase
     if purchase['item_type'] == 'cart':
         try:
-            cart_items = json.loads(purchase['metadata']) if purchase['metadata'] else []
-        except:
+            metadata = json.loads(purchase['metadata']) if purchase['metadata'] else []
+            # Cart metadata may be stored either as the legacy list format
+            # or as the newer dict format: {'items': [...], ...}.
+            if isinstance(metadata, dict):
+                cart_items = metadata.get('items', [])
+            else:
+                cart_items = metadata
+            if not isinstance(cart_items, list):
+                cart_items = []
+        except (TypeError, ValueError, json.JSONDecodeError):
             cart_items = []
 
         # Enrich each cart item with cover_image and vendor_name
@@ -8996,7 +9359,11 @@ def product_info(product_id):
                 continue
             try:
                 metadata = json.loads(cart_purchase['metadata'])
-            except (TypeError, ValueError):
+                if isinstance(metadata, dict):
+                    metadata = metadata.get('items', [])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(metadata, list):
                 continue
             if len(metadata) == 1 and metadata[0].get('item_type') == 'product' \
                     and int(metadata[0].get('item_id', 0)) == product_id:
@@ -9294,7 +9661,7 @@ def download_receipt(purchase_id):
 
 
 @app.route('/api/course/enroll/paystack', methods=['POST'])
-@login_required
+@customer_account_required
 def api_enroll_course_paystack():
     """Handle Paystack payment for course enrollment"""
     user_id = session.get('user_id')
@@ -9383,6 +9750,7 @@ def api_enroll_course_paystack():
                 session.get('user_name', 'Customer')
             ))
             order_id = cursor.lastrowid
+            insert_order_item(cursor, order_id, 'course', course_id, 1, course['price'])
 
             # --- Credit vendor wallet (70% earnings) ---
             # This route used to insert the order but never touch the
@@ -11479,7 +11847,6 @@ def _marketplace_course_query(search=None, category=None):
 
 
 @app.route('/marketplace')
-@login_required
 def marketplace():
     conn = cursor = None
     try:
@@ -11551,13 +11918,11 @@ def marketplace_search():
 
 
 @app.route('/products')
-@login_required
 def products():
     return marketplace()
 
 
 @app.route('/product/<int:product_id>')
-@login_required
 def product_detail(product_id):
     conn = cursor = None
     try:
