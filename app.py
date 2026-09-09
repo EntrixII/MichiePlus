@@ -437,7 +437,6 @@ def update_vendor_verification(vendor_id, new_status, rejection_reason=None):
     conn.close()
 
 
-
 def send_vendor_notification(vendor_email, vendor_name, subject, message, action_type):
     """Send a notification email to a vendor about admin actions."""
     if not EMAIL_USER or not EMAIL_PASSWORD:
@@ -1871,55 +1870,32 @@ def paystack_webhook():
 
 
 def get_bank_code(bank_name):
-    """Get Paystack bank code from the bank name."""
+    """Get the Paystack bank code for a Nigerian bank name."""
     if not bank_name or not PAYSTACK_SECRET_KEY:
         return None
-
     try:
-        url = "https://api.paystack.co/bank"
-        headers = {
-            'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
-            'Content-Type': 'application/json'
-        }
-
-        response = _paystack_request_with_retry(
-            'GET',
-            url,
-            headers=headers,
-            params={
-                'country': 'nigeria',
-                'perPage': 100
-            },
-            timeout=30
-        )
-
+        response = _paystack_request_with_retry('GET', 'https://api.paystack.co/bank',
+            headers={'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}', 'Content-Type': 'application/json'},
+            params={'country': 'nigeria', 'perPage': 100}, timeout=30)
         result = response.json()
-
         if not result.get('status'):
             print(f"Paystack bank lookup failed: {result}")
             return None
-
-        requested_name = bank_name.strip().lower()
-
-        for bank in result.get('data', []):
-            name = (bank.get('name') or '').strip().lower()
-
-            if name == requested_name:
+        requested = bank_name.strip().lower()
+        banks = result.get('data', [])
+        for bank in banks:
+            if (bank.get('name') or '').strip().lower() == requested:
                 return bank.get('code')
-
-        # Fallback for minor naming differences
-        for bank in result.get('data', []):
+        for bank in banks:
             name = (bank.get('name') or '').strip().lower()
-
-            if requested_name in name or name in requested_name:
+            if requested in name or name in requested:
                 return bank.get('code')
-
         print(f"Could not find Paystack bank code for: {bank_name}")
         return None
-
     except Exception as e:
         print(f"Error getting Paystack bank code for {bank_name}: {e}")
         return None
+
 
 def create_paystack_recipient(vendor_id):
     conn = get_db_connection()
@@ -4021,10 +3997,22 @@ def admin_approve_withdrawal(payout_id):
         if not PAYSTACK_SECRET_KEY:
             return jsonify({'success': False, 'message': 'Paystack is not configured on the server.'}), 500
 
-        # Reuse the existing recipient; create it from the vendor's bank details if needed.
-        recipient_code = payout['paystack_recipient_code'] or create_paystack_recipient(payout['user_id'])
+        # Release the payout row lock before creating a recipient on another DB connection.
+        recipient_code = payout['paystack_recipient_code']
         if not recipient_code:
-            return jsonify({'success': False, 'message': 'Could not create the Paystack transfer recipient. Check the vendor bank details and bank code.'}), 400
+            conn.rollback()
+            conn.close()
+            recipient_code = create_paystack_recipient(payout['user_id'])
+            if not recipient_code:
+                return jsonify({'success': False, 'message': 'Could not create the Paystack transfer recipient. Check the vendor bank details and bank code.'}), 400
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT pr.*, u.full_name AS vendor_name, u.email AS vendor_email, vp.paystack_recipient_code FROM payout_requests pr JOIN users u ON pr.user_id = u.id JOIN vendor_profiles vp ON u.id = vp.user_id WHERE pr.id = %s AND pr.status IN ('pending','processing') FOR UPDATE", (payout_id,))
+            payout = cursor.fetchone()
+            if not payout:
+                conn.close()
+                return jsonify({'success': False, 'message': 'Withdrawal is no longer pending.'}), 400
+            recipient_code = payout['paystack_recipient_code'] or recipient_code
 
         # Keep one permanent reference for idempotency/reconciliation.
         reference = payout['reference'] or f"mp_payout_{secrets.token_hex(16)}"
