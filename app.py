@@ -134,6 +134,7 @@ EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USER = os.environ.get('EMAIL_USER', '')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
 EMAIL_FROM = os.environ.get('EMAIL_FROM', EMAIL_USER)
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', EMAIL_USER)
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
 
 # File upload configuration
@@ -434,6 +435,7 @@ def update_vendor_verification(vendor_id, new_status, rejection_reason=None):
     cursor.execute(query, params)
     conn.commit()
     conn.close()
+
 
 
 def send_vendor_notification(vendor_email, vendor_name, subject, message, action_type):
@@ -1455,11 +1457,11 @@ def sync_vendor_wallet(user_id):
     cursor.execute("""
         SELECT COALESCE(SUM(amount), 0) as pending
         FROM payout_requests
-        WHERE user_id = %s AND status = 'pending'
+        WHERE user_id = %s AND status IN ('pending', 'processing')
     """, (user_id,))
     pending = cursor.fetchone()['pending'] or 0
 
-    balance = total_earned - total_withdrawn
+    balance = total_earned - total_withdrawn - pending
 
     # Update or insert wallet record
     cursor.execute("SELECT id FROM wallet WHERE user_id = %s", (user_id,))
@@ -1550,11 +1552,11 @@ def sync_vendor_wallet_with_conn(conn, user_id):
     cursor.execute("""
         SELECT COALESCE(SUM(amount), 0) as pending
         FROM payout_requests
-        WHERE user_id = %s AND status = 'pending'
+        WHERE user_id = %s AND status IN ('pending', 'processing')
     """, (user_id,))
     pending = cursor.fetchone()['pending'] or 0
 
-    balance = total_earned - total_withdrawn
+    balance = total_earned - total_withdrawn - pending
 
     cursor.execute("SELECT id FROM wallet WHERE user_id = %s", (user_id,))
     if cursor.fetchone():
@@ -1867,6 +1869,57 @@ def paystack_webhook():
 
     return jsonify({'status': 'ok'}), 200
 
+
+def get_bank_code(bank_name):
+    """Get Paystack bank code from the bank name."""
+    if not bank_name or not PAYSTACK_SECRET_KEY:
+        return None
+
+    try:
+        url = "https://api.paystack.co/bank"
+        headers = {
+            'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        response = _paystack_request_with_retry(
+            'GET',
+            url,
+            headers=headers,
+            params={
+                'country': 'nigeria',
+                'perPage': 100
+            },
+            timeout=30
+        )
+
+        result = response.json()
+
+        if not result.get('status'):
+            print(f"Paystack bank lookup failed: {result}")
+            return None
+
+        requested_name = bank_name.strip().lower()
+
+        for bank in result.get('data', []):
+            name = (bank.get('name') or '').strip().lower()
+
+            if name == requested_name:
+                return bank.get('code')
+
+        # Fallback for minor naming differences
+        for bank in result.get('data', []):
+            name = (bank.get('name') or '').strip().lower()
+
+            if requested_name in name or name in requested_name:
+                return bank.get('code')
+
+        print(f"Could not find Paystack bank code for: {bank_name}")
+        return None
+
+    except Exception as e:
+        print(f"Error getting Paystack bank code for {bank_name}: {e}")
+        return None
 
 def create_paystack_recipient(vendor_id):
     conn = get_db_connection()
@@ -3898,6 +3951,216 @@ def admin_pending_withdrawals():
     return render_template('admin/pending-withdrawals.html', withdrawals=withdrawals)
 
 
+def send_payout_notification_email(to_email, recipient_name, subject, title, message, amount=None, reference=None):
+    """Send payout status notifications. Email failure never changes payout status."""
+    if not to_email or not EMAIL_USER or not EMAIL_PASSWORD:
+        print(f"[SKIPPED] Payout email not configured: {to_email} / {subject}")
+        return False
+
+    amount_html = f"<p><strong>Amount:</strong> ₦{float(amount):,.2f}</p>" if amount is not None else ""
+    reference_html = f"<p><strong>Reference:</strong> {reference}</p>" if reference else ""
+    html_content = f"""
+    <!DOCTYPE html><html><head><meta charset=\"UTF-8\">
+    <style>
+      body{{font-family:Arial,sans-serif;line-height:1.6;color:#333}}
+      .container{{max-width:600px;margin:0 auto;padding:20px}}
+      .header{{background:#0000c1;color:#fff;padding:25px;border-radius:10px 10px 0 0}}
+      .content{{background:#f8f9fc;padding:25px;border-radius:0 0 10px 10px}}
+      .box{{background:#fff;border:1px solid #e1e5ee;padding:16px;border-radius:8px;margin:18px 0}}
+      .footer{{text-align:center;color:#888;font-size:12px;margin-top:20px}}
+    </style></head><body>
+    <div class=\"container\"><div class=\"header\"><h2>{title}</h2></div>
+    <div class=\"content\"><p>Hi {recipient_name or 'there'},</p><p>{message}</p>
+    <div class=\"box\">{amount_html}{reference_html}</div>
+    <p>MichiePlus</p></div><div class=\"footer\">© 2026 MichiePlus. All rights reserved.</div>
+    </div></body></html>
+    """
+    text_content = f"""MichiePlus - {title}\n\nHi {recipient_name or 'there'},\n\n{message}\n\nAmount: ₦{float(amount):,.2f}\nReference: {reference or 'N/A'}\n\n© 2026 MichiePlus"""
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = EMAIL_FROM
+        msg['To'] = to_email
+        msg.attach(MIMEText(text_content, 'plain'))
+        msg.attach(MIMEText(html_content, 'html'))
+        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASSWORD.replace(' ', ''))
+            server.send_message(msg)
+        print(f"Payout email sent to {to_email}")
+        return True
+    except Exception as e:
+        print(f"Payout email failed to {to_email}: {e}")
+        return False
+
+
+@app.route('/admin/withdrawals/<int:payout_id>/approve', methods=['POST'])
+@admin_required
+def admin_approve_withdrawal(payout_id):
+    """Approve a payout and initiate the actual Paystack bank transfer."""
+    admin_id = session['user_id']
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT pr.*, u.full_name AS vendor_name, u.email AS vendor_email,
+                   vp.paystack_recipient_code
+            FROM payout_requests pr
+            JOIN users u ON pr.user_id = u.id
+            JOIN vendor_profiles vp ON u.id = vp.user_id
+            WHERE pr.id = %s
+            FOR UPDATE
+        """, (payout_id,))
+        payout = cursor.fetchone()
+
+        if not payout:
+            return jsonify({'success': False, 'message': 'Withdrawal request not found.'}), 404
+        if payout['status'] not in ('pending', 'processing'):
+            return jsonify({'success': False, 'message': f"Withdrawal is already {payout['status']}."}), 400
+        if not PAYSTACK_SECRET_KEY:
+            return jsonify({'success': False, 'message': 'Paystack is not configured on the server.'}), 500
+
+        # Reuse the existing recipient; create it from the vendor's bank details if needed.
+        recipient_code = payout['paystack_recipient_code'] or create_paystack_recipient(payout['user_id'])
+        if not recipient_code:
+            return jsonify({'success': False, 'message': 'Could not create the Paystack transfer recipient. Check the vendor bank details and bank code.'}), 400
+
+        # Keep one permanent reference for idempotency/reconciliation.
+        reference = payout['reference'] or f"mp_payout_{secrets.token_hex(16)}"
+        amount_kobo = int(Decimal(str(payout['amount'])) * 100)
+        transfer_url = 'https://api.paystack.co/transfer'
+        headers = {
+            'Authorization': f'Bearer {PAYSTACK_SECRET_KEY}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'source': 'balance',
+            'amount': amount_kobo,
+            'recipient': recipient_code,
+            'reference': reference,
+            'reason': f"MichiePlus vendor withdrawal #{payout_id}",
+            'currency': 'NGN'
+        }
+
+        response = _paystack_request_with_retry('POST', transfer_url, headers=headers, json=payload, timeout=30)
+        try:
+            result = response.json()
+        except ValueError:
+            result = {}
+
+        if not response.ok or not result.get('status'):
+            failure = result.get('message') or f'Paystack HTTP {response.status_code}'
+            cursor.execute("""
+                UPDATE payout_requests
+                SET status = 'failed', failure_reason = %s, admin_id = %s,
+                    processed_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND status IN ('pending', 'processing')
+            """, (failure, admin_id, payout_id))
+            cursor.execute("""
+                UPDATE transactions
+                SET status = 'failed', description = %s
+                WHERE user_id = %s AND reference = %s
+            """, (f'Withdrawal failed: {failure}', payout['user_id'], reference))
+            cursor.execute("""
+                UPDATE wallet
+                SET balance = balance + %s,
+                    pending_balance = GREATEST(pending_balance - %s, 0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (payout['amount'], payout['amount'], payout['user_id']))
+            conn.commit()
+            try:
+                send_payout_notification_email(
+                    payout['vendor_email'], payout['vendor_name'],
+                    'Withdrawal Failed - MichiePlus', 'Withdrawal Failed',
+                    f"Your withdrawal could not be initiated by Paystack. Reason: {failure}",
+                    payout['amount'], reference
+                )
+                if ADMIN_EMAIL:
+                    send_payout_notification_email(
+                        ADMIN_EMAIL, 'Admin', 'Withdrawal Failed - MichiePlus', 'Withdrawal Failed',
+                        f"Withdrawal #{payout_id} for {payout['vendor_name']} failed to initiate through Paystack. Reason: {failure}",
+                        payout['amount'], reference
+                    )
+            except Exception as email_exc:
+                print(f"Withdrawal failure email error: {email_exc}")
+            return jsonify({'success': False, 'message': f'Paystack rejected the transfer: {failure}'}), 400
+
+        transfer = result.get('data') or {}
+        paystack_status = str(transfer.get('status') or 'pending').lower()
+        transfer_reference = transfer.get('reference') or reference
+
+        # Paystack returns success when the transfer has been accepted/queued.
+        # Keep it as processing until the transfer reaches a terminal status.
+        new_status = 'processing' if paystack_status in ('pending', 'otp') else 'completed' if paystack_status == 'success' else 'processing'
+        cursor.execute("""
+            UPDATE payout_requests
+            SET status = %s, reference = %s, admin_id = %s,
+                processed_at = CURRENT_TIMESTAMP,
+                completed_at = CASE WHEN %s = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                failure_reason = NULL
+            WHERE id = %s AND status IN ('pending', 'processing')
+        """, (new_status, transfer_reference, admin_id, new_status, payout_id))
+
+        cursor.execute("""
+            UPDATE transactions
+            SET status = %s, reference = %s, description = %s
+            WHERE user_id = %s AND reference = %s
+        """, (new_status, transfer_reference,
+              'Withdrawal sent to Paystack' if new_status == 'processing' else 'Withdrawal completed via Paystack',
+              payout['user_id'], reference))
+
+        # The amount was already moved from available balance to pending when requested.
+        if new_status == 'completed':
+            cursor.execute("""
+                UPDATE wallet
+                SET pending_balance = GREATEST(pending_balance - %s, 0),
+                    total_withdrawn = total_withdrawn + %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (payout['amount'], payout['amount'], payout['user_id']))
+
+        conn.commit()
+
+        vendor_message = (
+            'Your withdrawal has been successfully initiated through Paystack and is being processed.'
+            if new_status == 'processing' else
+            'Your withdrawal has been successfully sent through Paystack.'
+        )
+        admin_message = (
+            f"Withdrawal #{payout_id} for {payout['vendor_name']} was accepted by Paystack and is processing."
+            if new_status == 'processing' else
+            f"Withdrawal #{payout_id} for {payout['vendor_name']} was completed through Paystack."
+        )
+        send_payout_notification_email(
+            payout['vendor_email'], payout['vendor_name'],
+            'Withdrawal Approved - MichiePlus', 'Withdrawal Approved',
+            vendor_message, payout['amount'], transfer_reference
+        )
+        if ADMIN_EMAIL:
+            send_payout_notification_email(
+                ADMIN_EMAIL, 'Admin', 'Vendor Withdrawal Processed - MichiePlus',
+                'Vendor Withdrawal Processed', admin_message, payout['amount'], transfer_reference
+            )
+
+        log_admin_action(admin_id, 'approve_withdrawal',
+                         f"Approved withdrawal #{payout_id}; Paystack reference {transfer_reference}; status {new_status}")
+        return jsonify({
+            'success': True,
+            'message': 'Paystack transfer initiated successfully.' if new_status == 'processing' else 'Withdrawal completed successfully.',
+            'status': new_status,
+            'reference': transfer_reference
+        })
+
+    except Exception as e:
+        conn.rollback()
+        app.logger.exception('admin_withdrawal_paystack_error payout_id=%s', payout_id)
+        return jsonify({'success': False, 'message': 'Unable to process withdrawal through Paystack.', 'details': str(e) if app.debug else None}), 500
+    finally:
+        conn.close()
+
+
 @app.route('/admin/products/<int:product_id>/detail')
 @admin_required
 def admin_product_detail(product_id):
@@ -4408,12 +4671,14 @@ def vendor_withdraw():
         return jsonify({'success': False, 'message': 'Please set up your bank details first.'}), 400
 
     # ===== Create payout request =====
+    # Paystack transfer references must be unique and 16-50 chars.
+    reference = f"mp_payout_{secrets.token_hex(16)}"
     cursor.execute("""
         INSERT INTO payout_requests (
-            user_id, amount, bank_name, account_number, account_name, status
+            user_id, amount, bank_name, account_number, account_name, status, reference
         )
-        VALUES (%s, %s, %s, %s, %s, 'pending')
-    """, (user_id, amount, vendor['bank_name'], vendor['bank_account_number'], vendor['bank_account_name']))
+        VALUES (%s, %s, %s, %s, %s, 'pending', %s)
+    """, (user_id, amount, vendor['bank_name'], vendor['bank_account_number'], vendor['bank_account_name'], reference))
 
     # ===== Update wallet pending balance =====
     cursor.execute("""
@@ -4426,10 +4691,10 @@ def vendor_withdraw():
     # ===== Create transaction record =====
     cursor.execute("""
         INSERT INTO transactions (
-            user_id, transaction_type, amount, net_amount, status, description
+            user_id, transaction_type, amount, net_amount, status, reference, description
         )
-        VALUES (%s, 'withdrawal', %s, %s, 'pending', 'Withdrawal to bank account')
-    """, (user_id, amount, amount))
+        VALUES (%s, 'withdrawal', %s, %s, 'pending', %s, 'Withdrawal to bank account')
+    """, (user_id, amount, amount, reference))
 
     conn.commit()
     conn.close()

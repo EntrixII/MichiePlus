@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -909,6 +908,16 @@ footer{
 
       const body = await readResponse(response);
 
+      // Never let the browser continue toward Paystack unless the server
+      // explicitly confirms that this request belongs to an authenticated,
+      // completed customer account. If the session is missing/expired, send
+      // the customer to the real login page instead of merely showing an
+      // error on the checkout screen.
+      if ((response.status === 401 || response.status === 403) && body?.redirect) {
+        window.location.assign(body.redirect);
+        return;
+      }
+
       if (!response.ok || !body || body.success !== true) {
         throw new Error(
           safeMessage(
@@ -990,4 +999,4 @@ footer{
 
 </body>
 </html>
-```
+
