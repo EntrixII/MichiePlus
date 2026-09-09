@@ -50,24 +50,136 @@
 
 <script>
 function approve(id) {
-    if (confirm('Approve this withdrawal?')) {
-        fetch('/admin/withdrawals/' + id + '/approve', { method: 'POST' })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) location.reload();
-            else alert(data.message);
-        });
+    if (!confirm('Approve this withdrawal?')) {
+        return;
     }
+
+    const button = event.currentTarget;
+    const originalText = button.innerHTML;
+
+    // Show loading state
+    button.disabled = true;
+    button.innerHTML = `
+        <span class="spinner"></span>
+        Processing...
+    `;
+    button.style.opacity = '0.7';
+    button.style.cursor = 'not-allowed';
+
+    fetch('/admin/withdrawals/' + id + '/approve', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(async res => {
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.message || 'Approval failed.');
+        }
+
+        return data;
+    })
+    .then(data => {
+        if (data.success) {
+            button.innerHTML = 'Approved';
+            button.style.opacity = '1';
+
+            // Give the user a moment to see the success state
+            setTimeout(() => {
+                location.reload();
+            }, 700);
+        } else {
+            throw new Error(data.message || 'Approval failed.');
+        }
+    })
+    .catch(error => {
+        alert(error.message);
+
+        // Restore button if something failed
+        button.disabled = false;
+        button.innerHTML = originalText;
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
+    });
 }
+
 function reject(id) {
-    if (confirm('Reject this withdrawal?')) {
-        fetch('/admin/withdrawals/' + id + '/reject', { method: 'POST' })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) location.reload();
-            else alert(data.message);
-        });
+    if (!confirm('Reject this withdrawal?')) {
+        return;
     }
+
+    const button = event.currentTarget;
+    const originalText = button.innerHTML;
+
+    button.disabled = true;
+    button.innerHTML = `
+        <span class="spinner"></span>
+        Processing...
+    `;
+    button.style.opacity = '0.7';
+    button.style.cursor = 'not-allowed';
+
+    fetch('/admin/withdrawals/' + id + '/reject', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(async res => {
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.message || 'Rejection failed.');
+        }
+
+        return data;
+    })
+    .then(data => {
+        if (data.success) {
+            button.innerHTML = 'Rejected';
+            button.style.opacity = '1';
+
+            setTimeout(() => {
+                location.reload();
+            }, 700);
+        } else {
+            throw new Error(data.message || 'Rejection failed.');
+        }
+    })
+    .catch(error => {
+        alert(error.message);
+
+        button.disabled = false;
+        button.innerHTML = originalText;
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
+    });
 }
 </script>
+
+<style>
+.spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin-right: 6px;
+    vertical-align: -2px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+button:disabled {
+    pointer-events: none;
+}
+</style>
 {% endblock %}
